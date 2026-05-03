@@ -541,10 +541,10 @@ class TestVoiceChannelCommands:
         mock_channel = AsyncMock()
         mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
         runner.adapters[Platform.DISCORD] = mock_adapter
-        await runner._handle_voice_channel_input(111, 42, "Hello from VC")
+        await runner._handle_voice_channel_input(111, 42, "Hermes, hello from VC")
         mock_adapter.handle_message.assert_called_once()
         event = mock_adapter.handle_message.call_args[0][0]
-        assert event.text == "Hello from VC"
+        assert event.text == "Hermes, hello from VC"
         assert event.message_type == MessageType.VOICE
         assert event.source.chat_id == "123"
         # A typed message in a guild text channel is a "group" turn; voice keys the same session.
@@ -596,7 +596,7 @@ class TestVoiceChannelCommands:
         mock_adapter._client.get_channel = MagicMock(return_value=AsyncMock())
         mock_adapter._resolve_channel_prompt = MagicMock(return_value="Be terse in #dev.")
         runner.adapters[Platform.DISCORD] = mock_adapter
-        await runner._handle_voice_channel_input(111, 42, "Hello from VC")
+        await runner._handle_voice_channel_input(111, 42, "Hermes, hello from VC")
         mock_adapter._resolve_channel_prompt.assert_called_once_with("123", None)
         event = mock_adapter.handle_message.call_args[0][0]
         assert event.channel_prompt == "Be terse in #dev."
@@ -625,7 +625,7 @@ class TestVoiceChannelCommands:
         mock_adapter.handle_message = AsyncMock()
         runner.adapters[Platform.DISCORD] = mock_adapter
 
-        await runner._handle_voice_channel_input(111, 42, "Hello from VC")
+        await runner._handle_voice_channel_input(111, 42, "Hermes, hello from VC")
 
         mock_adapter.handle_message.assert_called_once()
         event = mock_adapter.handle_message.call_args[0][0]
@@ -634,6 +634,82 @@ class TestVoiceChannelCommands:
         assert event.source.chat_name == "Hermes Server / #general"
         assert event.source.user_id == "42"
 
+    @pytest.mark.asyncio
+    async def test_input_without_wake_word_is_ignored(self, runner):
+        """Discord voice input without the wake word is ignored for privacy."""
+        from gateway.config import Platform
+
+        mock_adapter = AsyncMock()
+        mock_adapter._voice_text_channels = {111: 123}
+        mock_adapter._voice_sources = {}
+        mock_channel = AsyncMock()
+        mock_adapter._client = MagicMock()
+        mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
+        mock_adapter.handle_message = AsyncMock()
+        runner.adapters[Platform.DISCORD] = mock_adapter
+
+        await runner._handle_voice_channel_input(111, 42, "background conversation")
+
+        mock_adapter.handle_message.assert_not_called()
+        mock_channel.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_input_posts_transcript_in_text_channel(self, runner):
+        """Voice input sends transcript message to text channel."""
+        from gateway.config import Platform
+        mock_adapter = AsyncMock()
+        mock_adapter._voice_text_channels = {111: 123}
+        mock_adapter._voice_sources = {}
+        mock_channel = AsyncMock()
+        mock_adapter._client = MagicMock()
+        mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
+        mock_adapter.handle_message = AsyncMock()
+        runner.adapters[Platform.DISCORD] = mock_adapter
+        await runner._handle_voice_channel_input(111, 42, "Hermes, test transcript")
+        mock_channel.send.assert_called_once()
+        msg = mock_channel.send.call_args[0][0]
+        assert "Hermes, test transcript" in msg
+        assert "42" in msg  # user_id in mention
+
+    @pytest.mark.asyncio
+    async def test_input_suppresses_duplicate_transcript(self, runner):
+        """Near-immediate duplicate STT output should not dispatch twice."""
+        from gateway.config import Platform
+
+        mock_adapter = AsyncMock()
+        mock_adapter._voice_text_channels = {111: 123}
+        mock_adapter._voice_sources = {}
+        mock_channel = AsyncMock()
+        mock_adapter._client = MagicMock()
+        mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
+        mock_adapter.handle_message = AsyncMock()
+        runner.adapters[Platform.DISCORD] = mock_adapter
+
+        await runner._handle_voice_channel_input(111, 42, "Hermes, hello from VC")
+        await runner._handle_voice_channel_input(111, 42, "Hermes, hello from VC")
+
+        mock_adapter.handle_message.assert_called_once()
+        mock_channel.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_input_suppresses_near_duplicate_transcript(self, runner):
+        """Small STT wording drift should still be treated as the same utterance."""
+        from gateway.config import Platform
+
+        mock_adapter = AsyncMock()
+        mock_adapter._voice_text_channels = {111: 123}
+        mock_adapter._voice_sources = {}
+        mock_channel = AsyncMock()
+        mock_adapter._client = MagicMock()
+        mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
+        mock_adapter.handle_message = AsyncMock()
+        runner.adapters[Platform.DISCORD] = mock_adapter
+
+        await runner._handle_voice_channel_input(111, 42, "Hermes, this is a test of the voice system")
+        await runner._handle_voice_channel_input(111, 42, "Hermes, this is a test for the voice system")
+
+        mock_adapter.handle_message.assert_called_once()
+        mock_channel.send.assert_called_once()
 
     # -- _get_guild_id --
 
