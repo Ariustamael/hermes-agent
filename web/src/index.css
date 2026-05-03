@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400;1,500&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap');
 @import 'tailwindcss';
 /* `fonts.css` must come BEFORE `globals.css`: as of @nous-research/ui 0.14.x,
    `globals.css` only declares the `--font-*` CSS variables (Collapse, Rules
@@ -139,6 +140,79 @@ code, kbd, pre, samp, .font-mono, .font-mono-ui {
     overflow-x: hidden;
     overflow-y: auto;
   }
+}
+
+/* Shizen alternate dashboard shell: keep inherited route/page components readable
+   when they are rendered inside the alternate shell. The type palette mirrors the
+   imported Shizen design files: Cormorant Garamond for quiet display headings,
+   DM Sans 300/400/500 for body/UI, and the dashboard mono stack for code/TUI. */
+.shizen-shell {
+  --shizen-font-display: 'Cormorant Garamond', Georgia, serif;
+  --shizen-font-body: 'DM Sans', var(--theme-font-sans);
+  --shizen-font-mono: var(--theme-font-mono);
+  font-family: var(--shizen-font-body);
+  font-weight: 300;
+  line-height: 1.65;
+  letter-spacing: 0;
+}
+
+.shizen-shell :where(p, button, input, textarea, select, label, kbd),
+.shizen-shell .font-sans {
+  font-family: var(--shizen-font-body);
+}
+
+.shizen-shell :where(h1, h2, h3, .shizen-display) {
+  font-family: var(--shizen-font-display);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.shizen-shell :where(h4, h5, h6) {
+  font-family: var(--shizen-font-body);
+  font-weight: 400;
+}
+
+.shizen-shell .shizen-eyebrow,
+.shizen-shell .shizen-caption {
+  font-family: var(--shizen-font-body);
+  font-weight: 400;
+}
+
+.shizen-shell .font-serif {
+  font-family: var(--shizen-font-display) !important;
+}
+
+.shizen-shell :where(code, pre, samp, .font-mono, .font-mono-ui) {
+  font-family: var(--shizen-font-mono);
+}
+
+.shizen-shell .text-midground,
+.shizen-shell .text-foreground,
+.shizen-shell .text-card-foreground {
+  color: var(--shizen-text) !important;
+}
+
+.shizen-shell .text-muted-foreground,
+.shizen-shell .text-midground\/50,
+.shizen-shell .text-midground\/60,
+.shizen-shell .text-midground\/70 {
+  color: var(--shizen-muted) !important;
+}
+
+.shizen-shell .bg-card,
+.shizen-shell .bg-background-base,
+.shizen-shell .bg-popover {
+  background-color: var(--shizen-surface) !important;
+}
+
+.shizen-shell .border-border,
+.shizen-shell .border-current\/20,
+.shizen-shell .border-current\/10 {
+  border-color: var(--shizen-border) !important;
+}
+
+.shizen-shell .blend-lighter {
+  mix-blend-mode: normal !important;
 }
 
 /* Nousnet's hermes-agent layout bumps `small` and `code` to readable

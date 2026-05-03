@@ -100,6 +100,12 @@ const SystemPage = lazy(() => import("@/pages/SystemPage"));
 const ChatPage = lazy(() => import("@/pages/ChatPage"));
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import {
+  readStoredUiMode,
+  UI_MODE_CHANGE_EVENT,
+  UiModeSwitcher,
+  type UiMode,
+} from "@/components/UiModeSwitcher";
 import { useI18n } from "@/i18n";
 import type { Translations } from "@/i18n/types";
 import { PluginPage, PluginSlot, usePlugins } from "@/plugins";
@@ -110,6 +116,7 @@ import { latchChatActivation } from "@/lib/chat-activation";
 import { sharedGatewayProfiles, sharedGatewayRestartDescription } from "@/lib/shared-gateway";
 import { api } from "@/lib/api";
 import type { StatusResponse, UpdateCheckResponse } from "@/lib/api";
+import { ShizenDashboardShell } from "@/shizen/ShizenDashboardShell";
 
 function RouteFallback({ label = "Loading…" }: { label?: string }) {
   return (
@@ -377,6 +384,7 @@ export default function App() {
   const { pathname } = useLocation();
   const { manifests, loading: pluginsLoading } = usePlugins();
   const { theme } = useTheme();
+  const [uiMode, setUiMode] = useState<UiMode>(() => readStoredUiMode());
   const [mobileOpen, setMobileOpen] = useState(false);
   const closeMobile = useCallback(() => setMobileOpen(false), []);
 
@@ -472,6 +480,10 @@ export default function App() {
     () => partitionSidebarNav(builtinNav, manifests),
     [builtinNav, manifests],
   );
+  const navItems = useMemo(
+    () => [...sidebarNav.coreItems, ...sidebarNav.pluginItems],
+    [sidebarNav],
+  );
   const routes = useMemo(
     () => buildRoutes(builtinRoutes, manifests),
     [builtinRoutes, manifests],
@@ -488,6 +500,19 @@ export default function App() {
   );
 
   const layoutVariant = theme.layoutVariant ?? "standard";
+
+  useEffect(() => {
+    const syncMode = (event?: Event) => {
+      const custom = event as CustomEvent<UiMode> | undefined;
+      setUiMode(custom?.detail ?? readStoredUiMode());
+    };
+    window.addEventListener(UI_MODE_CHANGE_EVENT, syncMode);
+    window.addEventListener("storage", syncMode);
+    return () => {
+      window.removeEventListener(UI_MODE_CHANGE_EVENT, syncMode);
+      window.removeEventListener("storage", syncMode);
+    };
+  }, []);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -511,6 +536,21 @@ export default function App() {
     mql.addEventListener("change", onChange);
     return () => mql.removeEventListener("change", onChange);
   }, []);
+
+  if (uiMode === "shizen") {
+    return (
+      <ShizenDashboardShell
+        navItems={navItems}
+        routes={routes}
+        pluginTabMeta={pluginTabMeta}
+        isChatRoute={isChatRoute}
+        isDocsRoute={isDocsRoute}
+        embeddedChat={embeddedChat}
+        pluginsLoading={pluginsLoading}
+        chatOverriddenByPlugin={chatOverriddenByPlugin}
+      />
+    );
+  }
 
   return (
     <ProfileProvider>
@@ -710,6 +750,7 @@ export default function App() {
               status={sidebarStatus}
               tooltipWarmRef={tooltipWarmRef}
             />
+            <UiModeSwitcher />
 
             <div
               className={cn(
