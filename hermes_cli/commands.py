@@ -544,6 +544,12 @@ def gateway_help_lines(allowed: Optional[Iterable[str]] = None) -> list[str]:
                        if not (a.replace("-", "_") == cmd.name.replace("-", "_") and a != cmd.name)]
         alias_note = t("slash.shared.alias_note", aliases=", ".join(alias_parts)) if alias_parts else ""
         lines.append(f"`/{cmd.name}{args}` -- {cmd.describe()}{alias_note}")
+    reserved = {cmd.name for cmd in COMMAND_REGISTRY}
+    for name, description, args_hint in _iter_quick_command_entries():
+        if name in reserved:
+            continue
+        args = f" {args_hint}" if args_hint else ""
+        lines.append(f"`/{name}{args}` -- {description}")
     return lines
 
 
@@ -558,6 +564,28 @@ def _iter_plugin_command_entries() -> list[tuple[str, str, str]]:
     return [(name, str(meta.get("description") or t("slash.shared.plugin_default_desc", name=name)),
              str(meta.get("args_hint") or "").strip())
             for name, meta in commands.items() if isinstance(name, str) and isinstance(meta, dict)]
+
+
+def _iter_quick_command_entries() -> list[tuple[str, str, str]]:
+    """Return configured quick commands for help and platform menus."""
+    try:
+        from hermes_cli.config import read_raw_config
+        quick_commands = (read_raw_config() or {}).get("quick_commands", {})
+    except Exception:
+        return []
+    if not isinstance(quick_commands, dict):
+        return []
+    entries: list[tuple[str, str, str]] = []
+    for name, meta in sorted(quick_commands.items()):
+        if not isinstance(name, str) or not name:
+            continue
+        meta = meta if isinstance(meta, dict) else {}
+        entries.append((
+            name,
+            str(meta.get("description") or "User quick command"),
+            str(meta.get("args_hint") or "").strip(),
+        ))
+    return entries
 
 
 def __getattr__(name):  # PEP 562 — COMMANDS / COMMANDS_BY_CATEGORY are built per call so labels follow the active language
