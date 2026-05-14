@@ -786,6 +786,45 @@ class TestEditOverflowSplitAndDeliver:
     below the new visible message."""
 
     @pytest.mark.asyncio
+    async def test_stream_overflow_finalizes_completed_split_chunk(self):
+        """Earlier Telegram chunks must not remain raw Markdown.
+
+        Once streaming overflow moves from an existing editable message to a
+        new continuation message, the old chunk is complete and will not be
+        revisited.  Finalize that edit immediately so platform formatting
+        such as MarkdownV2 is applied to earlier split messages too.
+        """
+        adapter = MagicMock()
+        adapter.MAX_MESSAGE_LENGTH = 700
+        adapter.REQUIRES_EDIT_FINALIZE = False
+
+        consumer = GatewayStreamConsumer(
+            adapter,
+            "chat_123",
+            StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5, cursor=""),
+        )
+        consumer._message_id = "msg_existing"
+        consumer._last_sent_text = "preview"
+
+        calls = []
+
+        async def fake_send_or_edit(text, *, finalize=False):
+            calls.append((text, finalize, consumer._message_id))
+            return True
+
+        consumer._send_or_edit = fake_send_or_edit  # type: ignore[method-assign]
+        consumer.on_delta("## First formatted section\n\n" + "body " * 180)
+        consumer.finish()
+
+        await consumer.run()
+
+        assert calls, "overflow path should send/edit at least one chunk"
+        first_text, first_finalize, first_message_id = calls[0]
+        assert first_message_id == "msg_existing"
+        assert first_finalize is True
+        assert first_text.startswith("## First formatted section")
+
+    @pytest.mark.asyncio
     async def test_consumer_advances_message_id_on_split_and_deliver(self):
         adapter = MagicMock()
         # Simulate edit_message split-and-deliver: success=True with the
