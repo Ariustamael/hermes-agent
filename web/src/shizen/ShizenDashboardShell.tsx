@@ -23,6 +23,117 @@ import { cn } from "@/lib/utils";
 const SHIZEN_TONE_STORAGE_KEY = "hermes-shizen-tone";
 type ShizenTone = "light" | "dark";
 
+const SHIZEN_ROUTE_META: Record<string, { section: string; title?: string; description: string }> = {
+  "/chat": {
+    section: "Conversation",
+    title: "Conversation",
+    description: "Native Hermes chat, kept alive while the rest of the dashboard moves around it.",
+  },
+  "/sessions": {
+    section: "Recent traces",
+    title: "Traces",
+    description: "Past runs, resumable threads, and the shape of recent work.",
+  },
+  "/analytics": {
+    section: "Measures",
+    title: "Measures",
+    description: "Usage patterns and system drift without turning the cockpit into a scoreboard.",
+  },
+  "/models": {
+    section: "Engines",
+    title: "Engines",
+    description: "Provider and model choices for the work behind the interface.",
+  },
+  "/logs": {
+    section: "Signals",
+    title: "Signals",
+    description: "Runtime output and failures gathered into one readable ledger.",
+  },
+  "/cron": {
+    section: "Rhythms",
+    title: "Rhythms",
+    description: "Scheduled work, quiet reminders, and recurring agent runs.",
+  },
+  "/skills": {
+    section: "Practices",
+    title: "Practices",
+    description: "Reusable procedures the agent can load before it acts.",
+  },
+  "/plugins": {
+    section: "Extensions",
+    title: "Extensions",
+    description: "Dashboard surfaces and local tools mounted into Hermes.",
+  },
+  "/profiles": {
+    section: "Identities",
+    title: "Identities",
+    description: "Separate working contexts, models, tools, and memory scopes.",
+  },
+  "/config": {
+    section: "Settings",
+    title: "Settings",
+    description: "The living configuration beneath the dashboard shell.",
+  },
+  "/env": {
+    section: "Keys",
+    title: "Keys",
+    description: "Environment variables and credentials without exposing their contents.",
+  },
+  "/docs": {
+    section: "Reference",
+    title: "Reference",
+    description: "Documentation and working notes close to the instrument panel.",
+  },
+};
+
+const SHIZEN_NAV_SECTIONS = [
+  { title: "Work", paths: new Set(["/chat", "/sessions", "/analytics", "/cron"]) },
+  { title: "Instruments", paths: new Set(["/models", "/skills", "/plugins"]) },
+  { title: "Settings", paths: new Set(["/profiles", "/config", "/env", "/logs", "/docs"]) },
+] as const;
+
+function getShizenNavSections(navItems: NavItem[], t: ReturnType<typeof useI18n>["t"]): ShizenNavSection[] {
+  const seen = new Set<string>();
+  const sections: ShizenNavSection[] = [];
+
+  for (const section of SHIZEN_NAV_SECTIONS) {
+    const items = navItems
+      .filter((item) => section.paths.has(item.path))
+      .map((item) => ({ ...item, resolvedLabel: resolveNavLabel(item, t) }));
+    if (items.length) {
+      items.forEach((item) => seen.add(item.path));
+      sections.push({ title: section.title, items });
+    }
+  }
+
+  const extensionItems = navItems
+    .filter((item) => !seen.has(item.path))
+    .map((item) => ({ ...item, resolvedLabel: resolveNavLabel(item, t) }));
+  if (extensionItems.length) sections.push({ title: "Local rooms", items: extensionItems });
+  return sections;
+}
+
+function resolveNavLabel(item: NavItem, t: ReturnType<typeof useI18n>["t"]): string {
+  return item.labelKey ? ((t.app.nav as Record<string, string>)[item.labelKey] ?? item.label) : item.label;
+}
+
+function resolveShizenRouteMeta(pathname: string, pluginTabs: { path: string; label: string }[]) {
+  const exact = SHIZEN_ROUTE_META[pathname];
+  if (exact) return exact;
+  const plugin = pluginTabs.find((tab) => pathname === tab.path || pathname.startsWith(`${tab.path}/`));
+  if (plugin) {
+    return {
+      section: "Local room",
+      title: plugin.label,
+      description: "A local dashboard surface mounted into the Shizen shell.",
+    };
+  }
+  return {
+    section: "Dashboard",
+    description: "A quiet working surface for Hermes.",
+  };
+}
+
 function readStoredShizenTone(): ShizenTone {
   if (typeof window === "undefined") return "light";
   return window.localStorage.getItem(SHIZEN_TONE_STORAGE_KEY) === "dark" ? "dark" : "light";
@@ -49,6 +160,12 @@ function getShizenVars(tone: ShizenTone): CSSProperties {
       "--shizen-border-soft": "#2e2922",
       "--shizen-accent": "#96aa96",
       "--shizen-accent-deep": "#b4c8b4",
+      "--shizen-thread": "rgba(150, 170, 150, 0.44)",
+      "--shizen-shadow-soft": "0 24px 70px rgba(0,0,0,.26)",
+      "--shizen-shadow-line": "0 1px 0 rgba(234,229,221,.05)",
+      "--shizen-status-ok": "#86a98e",
+      "--shizen-status-warn": "#b6a15e",
+      "--shizen-status-error": "#b87868",
       "--shizen-grid": "rgba(234,229,221,.16)",
       "--color-foreground": "#eae5dd",
       "--color-card": "#221f1b",
@@ -87,6 +204,12 @@ function getShizenVars(tone: ShizenTone): CSSProperties {
     "--shizen-border-soft": "#e8e2d9",
     "--shizen-accent": "#8a9e8a",
     "--shizen-accent-deep": "#5c7a5c",
+    "--shizen-thread": "rgba(92, 122, 92, 0.38)",
+    "--shizen-shadow-soft": "0 26px 80px rgba(69, 55, 36, .12)",
+    "--shizen-shadow-line": "0 1px 0 rgba(255,255,255,.72)",
+    "--shizen-status-ok": "#4a8c6e",
+    "--shizen-status-warn": "#b08830",
+    "--shizen-status-error": "#9e4a3a",
     "--shizen-grid": "rgba(28,26,23,.12)",
     "--color-foreground": "#1c1a17",
     "--color-card": "#ffffff",
@@ -121,6 +244,7 @@ export function ShizenDashboardShell({
   const { t } = useI18n();
   const [tone, setTone] = useState<ShizenTone>(() => readStoredShizenTone());
   const shizenVars = getShizenVars(tone);
+  const navSections = useMemo(() => getShizenNavSections(navItems, t), [navItems, t]);
 
   useEffect(() => {
     window.localStorage.setItem(SHIZEN_TONE_STORAGE_KEY, tone);
@@ -132,53 +256,70 @@ export function ShizenDashboardShell({
       data-shizen-tone={tone}
       style={shizenVars}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none fixed inset-0 opacity-[0.035]"
-        style={{
-          backgroundImage:
-            "linear-gradient(var(--shizen-grid) 1px, transparent 1px), linear-gradient(90deg, var(--shizen-grid) 1px, transparent 1px)",
-          backgroundSize: "48px 48px",
-        }}
-      />
-      <aside className="relative z-10 hidden h-dvh w-[276px] shrink-0 flex-col border-r border-[var(--shizen-border)] bg-[var(--shizen-sidebar)]/90 backdrop-blur lg:flex">
-        <div className="border-b border-[var(--shizen-border-soft)] px-6 py-6">
+      <div aria-hidden className="shizen-ambient" />
+      <div aria-hidden className="shizen-paper-grain" />
+      <aside className="relative z-10 hidden h-dvh w-[292px] shrink-0 flex-col border-r border-[var(--shizen-border)] bg-[var(--shizen-sidebar)]/92 shadow-[var(--shizen-shadow-line)] backdrop-blur lg:flex">
+        <div className="relative border-b border-[var(--shizen-border-soft)] px-6 py-6">
+          <div aria-hidden className="absolute bottom-0 left-6 right-6 h-px bg-[var(--shizen-thread)] opacity-55" />
           <div className="shizen-eyebrow text-[0.68rem] uppercase tracking-[0.24em] text-[var(--shizen-accent)]">
             Agent cockpit
           </div>
           <div className="shizen-display mt-2 text-3xl font-medium leading-tight tracking-[-0.01em] text-[var(--shizen-text)]">
             Hermes
           </div>
+          <div className="mt-4 grid gap-1.5 text-[0.78rem] leading-relaxed text-[var(--shizen-muted)]">
+            <div className="flex items-center justify-between gap-3">
+              <span>Dashboard shell</span>
+              <span className="shizen-status-dot" aria-hidden />
+            </div>
+            <div className="text-[var(--shizen-faint)]">Quiet surface for local agent work.</div>
+          </div>
         </div>
 
         <nav className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--shizen-border-soft)] py-4" aria-label={t.app.navigation}>
-          <ul className="flex flex-col gap-1 px-3">
-            {navItems.map(({ path, label, labelKey, icon: Icon }) => {
-              const navLabel = labelKey
-                ? ((t.app.nav as Record<string, string>)[labelKey] ?? label)
-                : label;
-              return (
-                <li key={path}>
-                  <NavLink
-                    to={path}
-                    end={path === "/sessions"}
-                    className={({ isActive }) =>
-                      cn(
-                        "group flex items-center gap-3 rounded-[6px] border border-transparent px-3 py-2.5",
-                        "text-sm font-light normal-case tracking-[0.01em] transition-colors",
-                        isActive
-                          ? "border-[var(--shizen-border)] bg-[var(--shizen-surface)] text-[var(--shizen-text)] shadow-[0_1px_2px_rgba(28,26,23,.05)]"
-                          : "text-[var(--shizen-muted)] hover:border-[var(--shizen-border-soft)] hover:bg-[var(--shizen-surface)]/60 hover:text-[var(--shizen-text)]",
-                      )
-                    }
-                  >
-                    <Icon className="h-4 w-4 shrink-0 text-[var(--shizen-accent)]" />
-                    <span className="truncate">{navLabel}</span>
-                  </NavLink>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="flex flex-col gap-5 px-3">
+            {navSections.map((section) => (
+              <section key={section.title} aria-label={section.title}>
+                <div className="shizen-caption mb-2 px-3 text-[0.61rem] uppercase tracking-[0.18em] text-[var(--shizen-faint)]">
+                  {section.title}
+                </div>
+                <ul className="flex flex-col gap-1">
+                  {section.items.map(({ path, resolvedLabel, icon: Icon }) => (
+                    <li key={path}>
+                      <NavLink
+                        to={path}
+                        end={path === "/sessions"}
+                        className={({ isActive }) =>
+                          cn(
+                            "group relative flex items-center gap-3 rounded-[8px] border border-transparent px-3 py-2.5",
+                            "text-sm font-light normal-case tracking-[0.01em] transition-[background-color,border-color,color,transform] duration-150 ease-out",
+                            "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--shizen-accent)]",
+                            isActive
+                              ? "border-[var(--shizen-border)] bg-[var(--shizen-surface)] text-[var(--shizen-text)] shadow-[0_1px_2px_rgba(28,26,23,.05)]"
+                              : "text-[var(--shizen-muted)] hover:translate-x-0.5 hover:border-[var(--shizen-border-soft)] hover:bg-[var(--shizen-surface)]/62 hover:text-[var(--shizen-text)]",
+                          )
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
+                            <span
+                              aria-hidden
+                              className={cn(
+                                "absolute left-1 top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full transition-opacity",
+                                isActive ? "bg-[var(--shizen-accent)] opacity-100" : "bg-[var(--shizen-thread)] opacity-0 group-hover:opacity-50",
+                              )}
+                            />
+                            <Icon className="h-4 w-4 shrink-0 text-[var(--shizen-accent)]" />
+                            <span className="truncate">{resolvedLabel}</span>
+                          </>
+                        )}
+                      </NavLink>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         </nav>
 
         <ShizenSystemPanel />
@@ -264,17 +405,21 @@ function ShizenPageFrame({ children, pluginTabs, isChatRoute, isDocsRoute }: Shi
   const [afterTitle, setAfterTitle] = useState<ReactNode>(null);
   const [end, setEnd] = useState<ReactNode>(null);
 
+  /* Existing page-header bridge intentionally clears route-scoped header slots on navigation. */
+  /* eslint-disable react-hooks/set-state-in-effect */
   useLayoutEffect(() => {
     setTitleOverride(null);
     setAfterTitle(null);
     setEnd(null);
   }, [pathname]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const defaultTitle = useMemo(
     () => resolvePageTitle(pathname, t, pluginTabs),
     [pathname, t, pluginTabs],
   );
-  const displayTitle = titleOverride ?? defaultTitle;
+  const routeMeta = useMemo(() => resolveShizenRouteMeta(pathname, pluginTabs), [pathname, pluginTabs]);
+  const displayTitle = titleOverride ?? routeMeta.title ?? defaultTitle;
   const value = useMemo(
     () => ({ setAfterTitle, setEnd, setTitle: setTitleOverride }),
     [],
@@ -283,32 +428,41 @@ function ShizenPageFrame({ children, pluginTabs, isChatRoute, isDocsRoute }: Shi
   return (
     <PageHeaderContext.Provider value={value}>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="shrink-0 border-b border-[var(--shizen-border-soft)] bg-[var(--shizen-bg)]/70 px-5 py-4 backdrop-blur sm:px-8">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div className="min-w-0">
+        <header className="shrink-0 border-b border-[var(--shizen-border-soft)] bg-[var(--shizen-bg)]/78 px-5 py-5 backdrop-blur sm:px-8">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div className="min-w-0 max-w-3xl">
               <div className="shizen-eyebrow text-[0.68rem] uppercase tracking-[0.24em] text-[var(--shizen-accent)]">
-                Dashboard
+                {routeMeta.section}
               </div>
-              <h1 className="mt-1 truncate text-3xl font-normal leading-tight tracking-[-0.01em] text-[var(--shizen-text)] sm:text-4xl">
-                {displayTitle}
-              </h1>
-              {afterTitle ? <div className="mt-2">{afterTitle}</div> : null}
+              <div className="mt-1 flex min-w-0 flex-wrap items-baseline gap-3">
+                <h1 className="truncate text-3xl font-normal leading-tight tracking-[-0.01em] text-[var(--shizen-text)] sm:text-4xl">
+                  {displayTitle}
+                </h1>
+                {afterTitle ? <div className="shizen-header-adornment shrink-0">{afterTitle}</div> : null}
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--shizen-muted)]">
+                {routeMeta.description}
+              </p>
             </div>
-            <div className="flex min-w-0 items-center justify-end gap-3">
+            <div className="flex min-w-0 flex-wrap items-center justify-start gap-3 xl:justify-end">
               {end}
               {!isChatRoute && (
-                <div className="hidden items-center gap-2 rounded-full border border-[var(--shizen-border-soft)] bg-[var(--shizen-surface)]/70 px-3 py-2 text-sm text-[var(--shizen-muted)] md:flex">
+                <div className="hidden items-center gap-2 rounded-full border border-[var(--shizen-border-soft)] bg-[var(--shizen-surface)]/72 px-3 py-2 text-sm text-[var(--shizen-muted)] shadow-[var(--shizen-shadow-line)] md:flex">
                   <Search className="h-4 w-4 text-[var(--shizen-accent)]" />
                   <span>Search sessions, tools, and notes</span>
                 </div>
               )}
+              <div className="hidden items-center gap-2 rounded-full border border-[var(--shizen-border-soft)] bg-[var(--shizen-surface)]/52 px-3 py-2 text-sm text-[var(--shizen-muted)] lg:flex">
+                <span className="shizen-status-dot" aria-hidden />
+                <span>Signals listening</span>
+              </div>
             </div>
           </div>
         </header>
 
         <main
           className={cn(
-            "min-h-0 w-full min-w-0 flex-1 flex-col bg-[var(--shizen-bg)]",
+            "shizen-workbench min-h-0 w-full min-w-0 flex-1 flex-col bg-[var(--shizen-bg)]",
             isChatRoute ? "flex overflow-hidden" : "overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]",
             isDocsRoute && "flex",
           )}
@@ -474,4 +628,11 @@ interface NavItem {
   label: string;
   labelKey?: string;
   path: string;
+}
+
+type ShizenNavItem = NavItem & { resolvedLabel: string };
+
+interface ShizenNavSection {
+  title: string;
+  items: ShizenNavItem[];
 }
