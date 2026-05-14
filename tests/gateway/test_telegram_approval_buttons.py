@@ -1,5 +1,7 @@
 """Tests for Telegram inline keyboard approval buttons."""
 
+import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -196,6 +198,124 @@ class TestTelegramExecApproval:
         assert "Fix \\[issue\\]\\_1" in sent["text"]
         assert "alpha\\_beta" in sent["text"]
 
+    @pytest.mark.asyncio
+    async def test_truncates_long_command(self):
+        adapter = _make_adapter()
+        mock_msg = MagicMock()
+        mock_msg.message_id = 1
+        adapter._bot.send_message = AsyncMock(return_value=mock_msg)
+
+        long_cmd = "x" * 5000
+        await adapter.send_exec_approval(
+            chat_id="12345", command=long_cmd, session_key="s"
+        )
+
+        kwargs = adapter._bot.send_message.call_args[1]
+        assert "..." in kwargs["text"]
+        assert len(kwargs["text"]) < 5000
+
+
+# ===========================================================================
+# Ortho/Gray quiz inline keyboard buttons
+# ===========================================================================
+
+class TestTelegramQuizButtons:
+    """Test Ortho Teacher quiz messages get A-E response buttons."""
+
+    def _write_quiz(self, home: Path, qid: str = "grays_back_q005"):
+        quiz_dir = home / "state" / "telegram_quizzes"
+        quiz_dir.mkdir(parents=True, exist_ok=True)
+        quiz = {
+            "qid": qid,
+            "question": "A patient has shingles in the C7 dermatome. Where has the virus proliferated?",
+            "options": {
+                "A": "Sympathetic chain",
+                "B": "Dorsal root ganglion",
+                "C": "Lateral horn",
+                "D": "Posterior cutaneous branch",
+                "E": "Ventral horn",
+            },
+            "correct": "B",
+            "explanation": "Varicella-zoster reactivates in sensory dorsal root ganglia.",
+            "source": "Gray's Anatomy Review",
+        }
+        (quiz_dir / f"{qid}.json").write_text(json.dumps(quiz), encoding="utf-8")
+        return quiz
+
+    def test_quiz_reply_markup_detects_stored_question(self, tmp_path):
+        adapter = _make_adapter()
+        quiz = self._write_quiz(tmp_path)
+        content = (
+            "## Gray's Anatomy Review — Back Q5\n\n"
+            f"{quiz['question']}\n\n"
+            "A. Sympathetic chain\n"
+            "B. Dorsal root ganglion\n"
+            "C. Lateral horn\n"
+            "D. Posterior cutaneous branch\n"
+            "E. Ventral horn\n\n"
+            "Reply with A/B/C/D/E, or use the Telegram buttons."
+        )
+
+        with patch("hermes_constants.get_hermes_home", return_value=tmp_path):
+            with patch(
+                "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+                side_effect=lambda text, callback_data: SimpleNamespace(
+                    text=text, callback_data=callback_data
+                ),
+            ):
+                with patch(
+                    "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+                    side_effect=lambda rows: SimpleNamespace(inline_keyboard=rows),
+                ):
+                    markup = adapter._quiz_reply_markup_for_content(content)
+
+        assert markup is not None
+        buttons = [button for row in markup.inline_keyboard for button in row]
+        assert [button.text for button in buttons] == ["A", "B", "C", "D", "E"]
+        assert [button.callback_data for button in buttons] == [
+            "quiz:grays_back_q005:A",
+            "quiz:grays_back_q005:B",
+            "quiz:grays_back_q005:C",
+            "quiz:grays_back_q005:D",
+            "quiz:grays_back_q005:E",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_send_attaches_quiz_reply_markup_to_first_chunk(self, tmp_path):
+        adapter = _make_adapter()
+        quiz = self._write_quiz(tmp_path)
+        mock_msg = MagicMock()
+        mock_msg.message_id = 42
+        adapter._bot.send_message = AsyncMock(return_value=mock_msg)
+        content = f"{quiz['question']}\n\nReply with A/B/C/D/E, or use the Telegram buttons."
+
+        with patch("hermes_constants.get_hermes_home", return_value=tmp_path):
+            with patch(
+                "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+                side_effect=lambda text, callback_data: SimpleNamespace(
+                    text=text, callback_data=callback_data
+                ),
+            ):
+                with patch(
+                    "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+                    side_effect=lambda rows: SimpleNamespace(inline_keyboard=rows),
+                ):
+                    result = await adapter.send(chat_id="12345", content=content)
+
+        assert result.success is True
+        kwargs = adapter._bot.send_message.call_args[1]
+        assert kwargs["reply_markup"] is not None
+        buttons = [button for row in kwargs["reply_markup"].inline_keyboard for button in row]
+        assert [button.callback_data for button in buttons] == [
+            "quiz:grays_back_q005:A",
+            "quiz:grays_back_q005:B",
+            "quiz:grays_back_q005:C",
+            "quiz:grays_back_q005:D",
+            "quiz:grays_back_q005:E",
+        ]
+
+
+# ===========================================================================
 # _handle_callback_query — approval button clicks
 # ===========================================================================
 
