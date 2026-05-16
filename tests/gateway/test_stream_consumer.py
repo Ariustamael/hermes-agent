@@ -338,6 +338,118 @@ class TestSegmentBreakOnToolBoundary:
             f"Cursor found in finalized segment: {thinking_texts[-1]!r}"
         )
 
+    @pytest.mark.asyncio
+    async def test_multiple_segment_breaks(self):
+        """Multiple tool boundaries create multiple message segments."""
+        adapter = MagicMock()
+        msg_counter = iter(["msg_1", "msg_2", "msg_3"])
+        adapter.send = AsyncMock(
+            side_effect=lambda **kw: SimpleNamespace(success=True, message_id=next(msg_counter))
+        )
+        adapter.edit_message = AsyncMock(return_value=SimpleNamespace(success=True))
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        config = StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5)
+        consumer = GatewayStreamConsumer(adapter, "chat_123", config)
+
+        consumer.on_delta("Phase 1")
+        consumer.on_delta(None)  # tool boundary
+        consumer.on_delta("Phase 2")
+        consumer.on_delta(None)  # another tool boundary
+        consumer.on_delta("Phase 3")
+        consumer.finish()
+
+        await consumer.run()
+
+        # Three separate messages
+        assert adapter.send.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_already_sent_stays_true_after_segment(self):
+        """already_sent remains True after a segment break."""
+        adapter = MagicMock()
+        send_result = SimpleNamespace(success=True, message_id="msg_1")
+        adapter.send = AsyncMock(return_value=send_result)
+        adapter.edit_message = AsyncMock(return_value=SimpleNamespace(success=True))
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        config = StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5)
+        consumer = GatewayStreamConsumer(adapter, "chat_123", config)
+
+        consumer.on_delta("Text")
+        consumer.on_delta(None)
+        consumer.finish()
+
+        await consumer.run()
+
+        assert consumer.already_sent
+
+    @pytest.mark.asyncio
+    async def test_telegram_edit_transport_buffers_until_final_send(self):
+        """Telegram edit-streaming should not commit visible preview chunks.
+
+        Long Telegram replies are Markdown-formatted and split by the adapter at
+        final delivery.  Sending visible edit-stream previews before completion
+        can leave plain chunks behind and can race the gateway's fallback final
+        send under flood control.  When native draft streaming is unavailable,
+        the consumer should buffer deltas and send exactly once at finish.
+        """
+        adapter = MagicMock()
+        adapter.name = "Telegram"
+        adapter.send = AsyncMock(return_value=SimpleNamespace(success=True, message_id="msg_1"))
+        adapter.edit_message = AsyncMock(return_value=SimpleNamespace(success=True))
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        config = StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5, cursor=" ▉", transport="edit")
+        consumer = GatewayStreamConsumer(adapter, "chat_123", config)
+
+        consumer.on_delta("Hello")
+        task = asyncio.create_task(consumer.run())
+        await asyncio.sleep(0.08)
+        consumer.on_delta(" **world**")
+        await asyncio.sleep(0.08)
+
+        # No visible preview should be committed before finalization.
+        adapter.send.assert_not_called()
+        adapter.edit_message.assert_not_called()
+
+        consumer.finish()
+        await task
+
+        adapter.send.assert_called_once()
+        assert adapter.send.call_args[1]["content"] == "Hello **world**"
+        adapter.edit_message.assert_not_called()
+        assert consumer.final_response_sent
+
+    @pytest.mark.asyncio
+    async def test_edit_failure_sends_only_unsent_tail_at_finish(self):
+        """If an edit fails mid-stream, send only the missing tail once at finish."""
+        adapter = MagicMock()
+        send_results = [
+            SimpleNamespace(success=True, message_id="msg_1"),
+            SimpleNamespace(success=True, message_id="msg_2"),
+        ]
+        adapter.send = AsyncMock(side_effect=send_results)
+        adapter.edit_message = AsyncMock(return_value=SimpleNamespace(success=False, error="flood_control:6"))
+        adapter.MAX_MESSAGE_LENGTH = 4096
+
+        config = StreamConsumerConfig(edit_interval=0.01, buffer_threshold=5, cursor=" ▉")
+        consumer = GatewayStreamConsumer(adapter, "chat_123", config)
+
+        consumer.on_delta("Hello")
+        task = asyncio.create_task(consumer.run())
+        await asyncio.sleep(0.08)
+        consumer.on_delta(" world")
+        await asyncio.sleep(0.08)
+        consumer.finish()
+        await task
+
+        assert adapter.send.call_count == 2
+        first_text = adapter.send.call_args_list[0][1]["content"]
+        second_text = adapter.send.call_args_list[1][1]["content"]
+        assert "Hello" in first_text
+        assert second_text.strip() == "world"
+        assert consumer.already_sent
 
     @pytest.mark.asyncio
     async def test_segment_break_clears_failed_edit_fallback_state(self):
@@ -808,7 +920,7 @@ class TestEditOverflowSplitAndDeliver:
 
         calls = []
 
-        async def fake_send_or_edit(text, *, finalize=False):
+        async def fake_send_or_edit(text, *, finalize=False, is_turn_final=False):
             calls.append((text, finalize, consumer._message_id))
             return True
 

@@ -140,6 +140,14 @@ class GatewayStreamConsumer(StreamTransportMixin, StreamFallbackMixin, StreamThi
         # Only platforms needing an explicit finalize call (DingTalk AI Cards) force a
         # redundant final edit; ``is True`` keeps MagicMock adapters out.
         self._adapter_requires_finalize = getattr(adapter, "REQUIRES_EDIT_FINALIZE", False) is True
+        # Telegram edit previews can be formatted/split differently from the final
+        # adapter send, and flood-control retries can race that final delivery. A
+        # real Telegram adapter is recognized by type; ``name`` keeps focused
+        # transport tests independent of adapter construction.
+        self._is_telegram_adapter = (
+            str(getattr(adapter, "name", "") or "").lower() == "telegram"
+            or type(adapter).__name__ == "TelegramAdapter"
+        )
         # Telegram bounds edit retries at 5s; a fallback must not wait longer.
         self._max_fallback_flood_retry_seconds = 5.0
 
@@ -649,6 +657,12 @@ class GatewayStreamConsumer(StreamTransportMixin, StreamFallbackMixin, StreamThi
             self._bump_draft_id()
             logger.debug("Stream consumer using native-draft transport (chat=%s draft_id=%s)",
                          self.chat_id, self._draft_id)
+        elif self._is_telegram_adapter:
+            # Preserve native drafts when selected, but never expose the legacy
+            # edit transport for Telegram. Buffering makes the consumer issue one
+            # finalized TelegramAdapter.send(), which owns Markdown formatting and
+            # splitting without preview/final duplication.
+            self.cfg.buffer_only = True
 
     def _drain_queue(self) -> _Tick:
         """Drain everything queued so far into one tick.  Control sentinels stop the drain
