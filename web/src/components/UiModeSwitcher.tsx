@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { LayoutDashboard } from "lucide-react";
-import { Typography } from "@/components/NouiTypography";
+import { Typography } from "@nous-research/ui/ui/components/typography/index";
 import { cn } from "@/lib/utils";
 
 export const UI_MODE_STORAGE_KEY = "hermes-dashboard-ui-mode";
