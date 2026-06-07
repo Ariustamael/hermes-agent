@@ -920,8 +920,8 @@ class TestEditOverflowSplitAndDeliver:
 
         calls = []
 
-        async def fake_send_or_edit(text, *, finalize=False, is_turn_final=False):
-            calls.append((text, finalize, consumer._message_id))
+        async def fake_send_or_edit(text, *, finalize=False, is_turn_final=True):
+            calls.append((text, finalize, is_turn_final, consumer._message_id))
             return True
 
         consumer._send_or_edit = fake_send_or_edit  # type: ignore[method-assign]
@@ -931,9 +931,10 @@ class TestEditOverflowSplitAndDeliver:
         await consumer.run()
 
         assert calls, "overflow path should send/edit at least one chunk"
-        first_text, first_finalize, first_message_id = calls[0]
+        first_text, first_finalize, first_is_turn_final, first_message_id = calls[0]
         assert first_message_id == "msg_existing"
         assert first_finalize is True
+        assert first_is_turn_final is False
         assert first_text.startswith("## First formatted section")
 
     @pytest.mark.asyncio
