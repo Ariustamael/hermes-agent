@@ -1242,14 +1242,18 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
                 return self.process_command(f"{target} {user_args}".strip(), redispatch=True)
             self._console_print(f"[bold red]{_t('cli.quick.no_target', command=base_cmd)}[/]")
             return True
-        if qtype != "exec":
+        if qtype not in {"exec", "exec_async"}:
             self._console_print(f"[bold red]{_t('cli.quick.unsupported_type', command=base_cmd)}[/]")
             return True
+        import shlex
         import subprocess
         exec_cmd = qcmd.get("command", "")
         if not exec_cmd:
             self._console_print(f"[bold red]{_t('cli.quick.no_command', command=base_cmd)}[/]")
             return True
+        timeout = int(qcmd.get("timeout", 30) or 30)
+        if qcmd.get("pass_args") and user_args:
+            exec_cmd = f"{exec_cmd} {shlex.quote(user_args)}"
         try:
             # shell=True is intentional (user-authored config snippets, never LLM controlled);
             # the env is sanitized because this process holds every API key.
@@ -1257,7 +1261,7 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
             from hermes_cli._subprocess_compat import windows_hide_flags
             result = subprocess.run(
                 exec_cmd, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=30, env=build_subprocess_env(),
+                timeout=timeout, env=build_subprocess_env(),
                 creationflags=windows_hide_flags(),  # no console flash on Windows (#56747),
                 check=False,
             )

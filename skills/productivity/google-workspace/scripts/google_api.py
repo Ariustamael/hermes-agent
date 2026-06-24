@@ -13,6 +13,8 @@ Usage:
   python google_api.py calendar list [--from DATE] [--to DATE] [--calendar primary]
   python google_api.py calendar create --summary "Meeting" --start DATETIME --end DATETIME
   python google_api.py drive search "budget report" [--max 10]
+  python google_api.py tasks lists
+  python google_api.py tasks list [--list TASKLIST_ID]
   python google_api.py contacts list [--max 20]
   python google_api.py sheets get SHEET_ID RANGE
   python google_api.py sheets update SHEET_ID RANGE --values '[[...]]'
@@ -51,6 +53,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/contacts.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/documents",
+    "https://www.googleapis.com/auth/tasks",
 ]
 
 
@@ -624,6 +627,53 @@ def calendar_delete(args):
     service = build_service("calendar", "v3")
     service.events().delete(calendarId=args.calendar, eventId=args.event_id).execute()
     print(json.dumps({"status": "deleted", "eventId": args.event_id}))
+
+
+# =========================================================================
+# Google Tasks
+# =========================================================================
+
+
+def tasks_lists(args):
+    """List Google Tasks task lists."""
+    service = build_service("tasks", "v1")
+    results = service.tasklists().list(maxResults=args.max).execute()
+    lists = []
+    for item in results.get("items", []):
+        lists.append({
+            "id": item.get("id", ""),
+            "title": item.get("title", ""),
+            "updated": item.get("updated", ""),
+            "selfLink": item.get("selfLink", ""),
+        })
+    print(json.dumps(lists, indent=2, ensure_ascii=False))
+
+
+def tasks_list(args):
+    """List tasks in a Google Tasks task list."""
+    service = build_service("tasks", "v1")
+    results = service.tasks().list(
+        tasklist=args.list,
+        maxResults=args.max,
+        showCompleted=args.show_completed,
+        showDeleted=False,
+        showHidden=args.show_hidden,
+    ).execute()
+    tasks = []
+    for item in results.get("items", []):
+        tasks.append({
+            "id": item.get("id", ""),
+            "title": item.get("title", ""),
+            "notes": item.get("notes", ""),
+            "status": item.get("status", ""),
+            "due": item.get("due", ""),
+            "completed": item.get("completed", ""),
+            "updated": item.get("updated", ""),
+            "parent": item.get("parent", ""),
+            "position": item.get("position", ""),
+            "links": item.get("links", []),
+        })
+    print(json.dumps(tasks, indent=2, ensure_ascii=False))
 
 
 # =========================================================================
@@ -1212,6 +1262,21 @@ def main():
     p.add_argument("event_id")
     p.add_argument("--calendar", default="primary")
     p.set_defaults(func=calendar_delete)
+
+    # --- Google Tasks ---
+    tasks = sub.add_parser("tasks")
+    tasks_sub = tasks.add_subparsers(dest="action", required=True)
+
+    p = tasks_sub.add_parser("lists")
+    p.add_argument("--max", type=int, default=20)
+    p.set_defaults(func=tasks_lists)
+
+    p = tasks_sub.add_parser("list")
+    p.add_argument("--list", default="@default", help="Task list ID (default: @default)")
+    p.add_argument("--max", type=int, default=50)
+    p.add_argument("--show-completed", action="store_true", help="Include completed tasks")
+    p.add_argument("--show-hidden", action="store_true", help="Include hidden tasks")
+    p.set_defaults(func=tasks_list)
 
     # --- Drive ---
     drv = sub.add_parser("drive")
