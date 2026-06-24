@@ -23,6 +23,11 @@ import { cn } from "@/lib/utils";
 const SHIZEN_TONE_STORAGE_KEY = "hermes-shizen-tone";
 type ShizenTone = "light" | "dark";
 
+function ShizenUnknownRouteFallback({ pluginsLoading }: { pluginsLoading: boolean }) {
+  if (pluginsLoading) return null;
+  return <Navigate to="/sessions" replace />;
+}
+
 const SHIZEN_ROUTE_META: Record<string, { section: string; title?: string; description: string }> = {
   "/chat": {
     section: "Conversation",
@@ -365,7 +370,7 @@ export function ShizenDashboardShell({
               {routes.map(({ key, path, element }) => (
                 <Route key={key} path={path} element={element} />
               ))}
-              <Route path="*" element={<Navigate to="/sessions" replace />} />
+              <Route path="*" element={<ShizenUnknownRouteFallback pluginsLoading={pluginsLoading} />} />
             </Routes>
 
             {embeddedChat &&
