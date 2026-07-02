@@ -375,6 +375,20 @@ class TestGeneratedSystemdUnits:
 
         assert "SoftResourceLimits" not in plist
 
+    def test_user_unit_dedupes_wsl_interop_trailing_slash_variants(self, monkeypatch):
+        monkeypatch.setattr(gateway_cli, "is_wsl", lambda: True)
+        monkeypatch.setenv(
+            "PATH",
+            "/usr/local/bin:/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0",
+        )
+        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: None)
+
+        unit = gateway_cli.generate_systemd_unit(system=False)
+        path_line = next(
+            line for line in unit.splitlines() if line.startswith('Environment="PATH=')
+        )
+
+        assert path_line.count("/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0") == 1
 
 class TestWslInteropPaths:
     """_build_wsl_interop_paths() — only Windows-interop tool dirs belong in the unit's PATH.

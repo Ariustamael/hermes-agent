@@ -3047,11 +3047,19 @@ def _build_wsl_interop_paths(path_entries: list[str]) -> list[str]:
         if Path(entry).exists()
     ]
 
+    def _path_key(entry: str) -> str:
+        # WSL can surface the same Windows directory with or without a
+        # trailing slash (notably WindowsPowerShell/v1.0). Treat those as the
+        # same path so the generated unit is stable when the gateway refreshes
+        # itself from the service's own persisted PATH.
+        return entry.rstrip("/") or entry
+
     result: list[str] = []
-    seen = set(path_entries)
+    seen = {_path_key(p) for p in path_entries if p}
     for entry in candidates:
-        if entry and entry not in seen:
-            seen.add(entry)
+        key = _path_key(entry) if entry else ""
+        if key and key not in seen:
+            seen.add(key)
             result.append(entry)
     return result
 
