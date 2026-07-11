@@ -5,7 +5,21 @@ This root file holds only what applies everywhere. Each area has its own `AGENTS
 ~8k chars; `agent/subdirectory_hints.py` delivers up to 32k and truncates head/tail with a warning
 past that); see the **routing table** at the end and read the area file before editing in that area.
 
-**Never give up on the right solution.**
+## Authorized persistence and verification
+
+**Persist rigorously within the user-authorized scope.** Pursue the right solution,
+but never substitute targets, broaden access, use unapproved credentials, take
+destructive actions, or claim completion without verifiable evidence.
+
+- Treat named repositories, paths, accounts, credentials, hosts, and deployments as
+  an allowlist. Do not infer or substitute similar resources.
+- Before an irreversible, destructive, external, or broader-scope action, state the
+  exact target and obtain approval unless it was explicitly authorized.
+- Do not search for, move, reuse, or infer credentials beyond those explicitly
+  provided for the task.
+- Verify actual builds, tests, deployments, edits, uploads, and external actions
+  before reporting them complete. If blocked or ambiguous, preserve state, report
+  the evidence and blocker, and ask before expanding scope.
 
 ## What Hermes Is
 
