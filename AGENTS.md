@@ -5,7 +5,21 @@ applies everywhere, then a routing table. Each area's `AGENTS.md` loads automati
 in that directory; read it before editing there. `python scripts/check` caps this file at 12k chars
 and every root-to-area chain at 30k, so it loads whole on 128k+ models: long form goes in the guide.
 
-**Never give up on the right solution.**
+## Authorized persistence and verification
+
+**Persist rigorously within the user-authorized scope.** Pursue the right solution,
+but never substitute targets, broaden access, use unapproved credentials, take
+destructive actions, or claim completion without verifiable evidence.
+
+- Treat named repositories, paths, accounts, credentials, hosts, and deployments as
+  an allowlist. Do not infer or substitute similar resources.
+- Before an irreversible, destructive, external, or broader-scope action, state the
+  exact target and obtain approval unless it was explicitly authorized.
+- Do not search for, move, reuse, or infer credentials beyond those explicitly
+  provided for the task.
+- Verify actual builds, tests, deployments, edits, uploads, and external actions
+  before reporting them complete. If blocked or ambiguous, preserve state, report
+  the evidence and blocker, and ask before expanding scope.
 
 ## What Hermes Is
 
