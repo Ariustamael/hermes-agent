@@ -242,7 +242,14 @@ class TestTelegramQuizButtons:
         (quiz_dir / f"{qid}.json").write_text(json.dumps(quiz), encoding="utf-8")
         return quiz
 
-    def test_quiz_reply_markup_detects_stored_question(self, tmp_path):
+    @pytest.mark.parametrize(
+        "reply_instruction",
+        [
+            "Tap an answer below, or reply A–E. The answer remains hidden until marked.",
+            "Reply with A/B/C/D/E, or use the Telegram buttons.",
+        ],
+    )
+    def test_quiz_reply_markup_detects_stored_question(self, tmp_path, reply_instruction):
         adapter = _make_adapter()
         quiz = self._write_quiz(tmp_path)
         content = (
@@ -253,7 +260,7 @@ class TestTelegramQuizButtons:
             "C. Lateral horn\n"
             "D. Posterior cutaneous branch\n"
             "E. Ventral horn\n\n"
-            "Reply with A/B/C/D/E, or use the Telegram buttons."
+            + reply_instruction
         )
 
         with patch("hermes_constants.get_hermes_home", return_value=tmp_path):
@@ -287,7 +294,7 @@ class TestTelegramQuizButtons:
         mock_msg = MagicMock()
         mock_msg.message_id = 42
         adapter._bot.send_message = AsyncMock(return_value=mock_msg)
-        content = f"{quiz['question']}\n\nReply with A/B/C/D/E, or use the Telegram buttons."
+        content = f"{quiz['question']}\n\nTap an answer below, or reply A–E. The answer remains hidden until marked."
 
         with patch("hermes_constants.get_hermes_home", return_value=tmp_path):
             with patch(
@@ -316,8 +323,126 @@ class TestTelegramQuizButtons:
 
 
 # ===========================================================================
-# _handle_callback_query — approval button clicks
+# Compact Ortho Teacher menu
 # ===========================================================================
+
+class TestTelegramOrthoMenuLayout:
+    """Keep the primary Ortho Teacher menu focused; secondary actions live under More."""
+
+    @staticmethod
+    def _labels_and_callbacks(markup):
+        buttons = [button for row in markup.inline_keyboard for button in row]
+        return [button.text for button in buttons], [button.callback_data for button in buttons]
+
+    def test_primary_menu_has_only_core_actions_and_more(self):
+        adapter = _make_adapter()
+        with patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+            side_effect=lambda text, callback_data: SimpleNamespace(text=text, callback_data=callback_data),
+        ), patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+            side_effect=lambda rows: SimpleNamespace(inline_keyboard=rows),
+        ):
+            markup = adapter._ortho_menu_reply_markup_for_content(
+                "## Ortho Teacher\n\nChoose a mode:"
+            )
+
+        labels, callbacks = self._labels_and_callbacks(markup)
+        assert labels == ["Ask", "3 pearls", "Daily", "Gray quiz", "More options →"]
+        assert callbacks == [
+            "ortho:prompt:topic",
+            "ortho:prompt:pearls",
+            "ortho:run:daily_pearls",
+            "ortho:run:quiz",
+            "ortho:more",
+        ]
+
+    def test_more_menu_retains_secondary_actions(self):
+        adapter = _make_adapter()
+        with patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+            side_effect=lambda text, callback_data: SimpleNamespace(text=text, callback_data=callback_data),
+        ), patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+            side_effect=lambda rows: SimpleNamespace(inline_keyboard=rows),
+        ):
+            markup = adapter._ortho_more_reply_markup()
+
+        labels, callbacks = self._labels_and_callbacks(markup)
+        assert labels == ["Full bank", "Choose chapter", "Quiz stats", "Source check", "◀ Back"]
+        assert callbacks == [
+            "ortho:run:quiz_all",
+            "ortho:chapters",
+            "ortho:run:stats",
+            "ortho:prompt:dry_run",
+            "ortho:back",
+        ]
+
+
+class TestTelegramOrthoAskSave:
+    """Only a sourced answer launched from the Ask menu may expose a vault save."""
+
+    @pytest.mark.asyncio
+    async def test_ask_output_attaches_save_button_and_stores_exact_content(self, tmp_path):
+        adapter = _make_adapter()
+        mock_msg = MagicMock()
+        mock_msg.message_id = 42
+        adapter._bot.send_message = AsyncMock(return_value=mock_msg)
+        answer = "## Osteolysis\n\nA cited Ortho Teacher answer.\n\nSources: [S1]"
+
+        with patch("hermes_constants.get_hermes_home", return_value=tmp_path), patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+            side_effect=lambda text, callback_data: SimpleNamespace(text=text, callback_data=callback_data),
+        ), patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+            side_effect=lambda rows: SimpleNamespace(inline_keyboard=rows),
+        ):
+            await adapter._send_ortho_output(
+                "12345", answer, save_to_obsidian=True, topic="what is osteolysis", user_id="12345"
+            )
+
+        buttons = [button for row in adapter._bot.send_message.call_args[1]["reply_markup"].inline_keyboard for button in row]
+        assert [(button.text, button.callback_data.split(":", 1)[0]) for button in buttons] == [("📥 Save to Obsidian", "ortho-save")]
+        payloads = list((tmp_path / "state" / "telegram_ortho_saves").glob("*.json"))
+        assert len(payloads) == 1
+        payload = json.loads(payloads[0].read_text(encoding="utf-8"))
+        assert payload["topic"] == "what is osteolysis"
+        assert payload["content"] == answer
+
+    @pytest.mark.asyncio
+    async def test_save_callback_writes_one_exact_note_and_removes_button(self, tmp_path):
+        adapter = _make_adapter()
+        answer = "## Osteolysis\n\nA cited Ortho Teacher answer.\n\nSources: [S1]"
+        with patch("hermes_constants.get_hermes_home", return_value=tmp_path):
+            save_id = adapter._store_ortho_save_payload(
+                chat_id="12345", user_id="12345", thread_id=None,
+                topic="what is osteolysis", content=answer,
+            )
+            assert save_id
+
+            query = AsyncMock()
+            query.data = f"ortho-save:{save_id}"
+            query.message = MagicMock()
+            query.message.chat_id = 12345
+            query.message.chat.type = "private"
+            query.from_user = MagicMock()
+            query.from_user.id = 12345
+            query.from_user.first_name = "Chester"
+            query.answer = AsyncMock()
+            query.edit_message_reply_markup = AsyncMock()
+            update = MagicMock()
+            update.callback_query = query
+
+            with patch.dict(os.environ, {"TELEGRAM_ALLOWED_USERS": "*"}, clear=False):
+                await adapter._handle_callback_query(update, MagicMock())
+
+        notes = list((tmp_path / "vault" / "05 Resources" / "Medicine" / "Orthopaedics" / "Ortho Teacher Questions").glob("*.md"))
+        assert len(notes) == 1
+        note = notes[0].read_text(encoding="utf-8")
+        assert "# Ortho Teacher — what is osteolysis" in note
+        assert answer in note
+        query.edit_message_reply_markup.assert_awaited_once_with(reply_markup=None)
+
 
 class TestTelegramApprovalCallback:
     """Test the approval callback handling in _handle_callback_query."""

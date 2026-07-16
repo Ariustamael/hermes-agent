@@ -10,8 +10,10 @@ import os
 import html as _html
 import re
 import time
+import uuid
 from contextvars import ContextVar
 from datetime import datetime, timezone, UTC
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, Set
 from hermes_cli import setup_platforms
 
@@ -1335,7 +1337,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             return True
         if re.search(r"(?m)^<details\b|^</details>|^<summary\b|^</summary>", content):
             return True
-        return "$$" in content
+        return "$$" in content or bool(re.search(r"(?m)^#{1,6}\s+\S", content))
 
     def _rich_delivery_enabled(self) -> bool:
         """Whether rich delivery is allowed (``rich_messages`` opt-in)."""
@@ -3474,7 +3476,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
 
     async def _send_chunk_with_retries(
         self, chat_id: str, chunk: str, index: int, reply_to: Optional[str], metadata: Optional[dict[str, Any]],
-        thread_id: Optional[str], used_thread_fallback: bool, error_types: tuple):
+        thread_id: Optional[str], used_thread_fallback: bool, error_types: tuple, reply_markup: Any = None):
         """Deliver one chunk: routing, up to 3 attempts, thread-not-found / deleted-anchor / flood handling.
 
         Returns ``(msg, used_thread_fallback)`` on success or a ``SendResult`` to return verbatim (fail-loud DM-topic
@@ -3495,6 +3497,8 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                 send_kwargs = {
                     "chat_id": normalize_telegram_chat_id(chat_id), "reply_to_message_id": reply_to_id, **thread_kwargs,
                     **self._link_preview_kwargs(), **self._notification_kwargs(metadata)}
+                if index == 0 and reply_markup is not None:
+                    send_kwargs["reply_markup"] = reply_markup
                 return await self._send_chunk_markdown_or_plain(chunk, send_kwargs), used_thread_fallback
             except _NetErr as send_err:
                 # BadRequest subclasses NetworkError in PTB but is permanent; handle specific cases.
@@ -3663,9 +3667,16 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         chunks: list[str] = []
         delivered: list[str] = []
         try:
+            # Inline keyboards only work with the ordinary send path. Compute them before the rich fast-path
+            # and keep rich delivery for messages that do not carry a local action.
+            reply_markup = (
+                self._quiz_reply_markup_for_content(content)
+                or self._ortho_menu_reply_markup_for_content(content)
+                or self._ortho_save_reply_markup((metadata or {}).get("ortho_save_id"))
+            )
             # Bot API 10.1 rich fast-path; falls through to legacy MarkdownV2 on permanent/capability
             # errors or DM-topic skips; returns directly on success or transient failure (no legacy resend).
-            if self._should_attempt_rich(content, metadata=metadata):
+            if reply_markup is None and self._should_attempt_rich(content, metadata=metadata):
                 rich_result = await self._try_send_rich(chat_id, content, reply_to, metadata)
                 if rich_result is not None:
                     if rich_result.success:
@@ -3678,7 +3689,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                     _separate_chunk_indicator_from_fence(re.sub(r" \((\d+)/(\d+)\)$", r" \\(\1/\2\\)", chunk))
                     for chunk in chunks
                ]
-            return await self._send_chunks(chat_id, chunks, delivered, reply_to, metadata, error_types)
+            return await self._send_chunks(chat_id, chunks, delivered, reply_to, metadata, error_types, reply_markup)
         except Exception as e:
             classified = self._classify_send_exception(e, error_types)
             return self._with_partial_send(classified, chunks[len(delivered):], delivered, tail_certain=classified.retryable)
@@ -3704,7 +3715,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
 
     async def _send_chunks(
         self, chat_id: str, chunks: list[str], delivered: list[str], reply_to: Optional[str],
-        metadata: Optional[dict[str, Any]], error_types: tuple) -> SendResult:
+        metadata: Optional[dict[str, Any]], error_types: tuple, reply_markup: Any = None) -> SendResult:
         """Deliver formatted ``chunks`` in order, appending each landed message id to ``delivered``
         (pre-seeded with the ids of an earlier partial send when resuming — the chunk index used for
         reply routing continues from there). A mid-loop refusal returns the ``partial_overflow`` result."""
@@ -3714,7 +3725,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         prior = len(delivered)
         for chunk in chunks:
             outcome = await self._send_chunk_with_retries(
-                chat_id, chunk, len(delivered), reply_to, metadata, thread_id, used_thread_fallback, error_types)
+                chat_id, chunk, len(delivered), reply_to, metadata, thread_id, used_thread_fallback, error_types, reply_markup)
             if isinstance(outcome, SendResult):
                 # Every SendResult returned here is a DEFINITE non-delivery (flood cap, DM-topic refusal);
                 # ambiguous timeouts raise instead, so the remainder is safe to resume from.
@@ -4701,6 +4712,8 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         for prefix, handler in (
             ("gt:", self._handle_gmail_triage_callback), ("ea:", self._handle_exec_approval_callback),
             ("sc:", self._handle_slash_confirm_callback), ("cl:", self._handle_clarify_callback),
+            ("quiz:", self._handle_quiz_callback), ("ortho-save:", self._handle_ortho_save_callback),
+            ("ortho:", self._handle_ortho_callback),
             ("update_prompt:", self._handle_update_prompt_callback)):
             if data.startswith(prefix):
                 await handler(query, data, cb)
@@ -4872,6 +4885,401 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             # Entry evicted / gateway restarted between ask and tap.
             await self._notify_clarify_expired(query, user_display)
             logger.warning("Telegram clarify button: resolve_gateway_clarify returned False (id=%s)", clarify_id)
+
+    def _record_quiz_attempt(self, quiz: Dict[str, Any], choice: str, *, is_correct: bool) -> None:
+        """Append Telegram quiz-button attempts to Ortho Teacher's stats JSONL."""
+        try:
+            from hermes_constants import get_hermes_home
+
+            attempts_path = get_hermes_home() / "state" / "gray_quiz_attempts.jsonl"
+            attempts_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "qid": str(quiz.get("qid") or ""),
+                "chapter": str(quiz.get("chapter") or ""),
+                "number": quiz.get("number"),
+                "choice": choice,
+                "correct": str(quiz.get("correct") or "").upper(),
+                "is_correct": is_correct,
+                "title": str(quiz.get("title") or quiz.get("qid") or "Gray's Anatomy Review question"),
+                "tags": quiz.get("tags") or [],
+                "via": "telegram-button",
+            }
+            with attempts_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            logger.debug("[%s] Could not record quiz attempt: %s", self.name, exc, exc_info=True)
+
+    def _quiz_reply_markup_for_content(self, content: str) -> Optional["InlineKeyboardMarkup"]:
+        """Attach stored-quiz choices to a matching ordinary Telegram send."""
+        normalized_content = content.casefold() if content else ""
+        if not normalized_content or not any(
+            marker.casefold() in normalized_content
+            for marker in ("Reply with A/B/C/D/E", "Reply A–E")
+        ):
+            return None
+        try:
+            from hermes_constants import get_hermes_home
+
+            quiz_dir = get_hermes_home() / "state" / "telegram_quizzes"
+            if not quiz_dir.exists():
+                return None
+            quiz_files = sorted(
+                quiz_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True,
+            )
+            for quiz_path in quiz_files[:20]:
+                try:
+                    quiz = json.loads(quiz_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                question = str(quiz.get("question", "")).strip()
+                options = quiz.get("options", {}) or {}
+                if not question or question not in content:
+                    continue
+                letters = [letter for letter in ["A", "B", "C", "D", "E"] if letter in options]
+                if not letters:
+                    letters = ["A", "B", "C", "D", "E"]
+                return InlineKeyboardMarkup([[
+                    InlineKeyboardButton(letter, callback_data=f"quiz:{quiz_path.stem}:{letter}")
+                    for letter in letters
+                ]])
+        except Exception as exc:
+            logger.debug("[%s] Could not build quiz reply markup: %s", self.name, exc, exc_info=True)
+        return None
+
+    def _ortho_menu_reply_markup_for_content(self, content: str) -> Optional["InlineKeyboardMarkup"]:
+        """Return an Ortho Teacher inline menu for the plain `/ortho` menu output."""
+        if not content or not content.lstrip().startswith("## Ortho Teacher"):
+            return None
+        if "Choose a mode:" not in content and "What would you like for this request?" not in content:
+            return None
+        try:
+            return InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("Ask", callback_data="ortho:prompt:topic"),
+                    InlineKeyboardButton("3 pearls", callback_data="ortho:prompt:pearls"),
+                ],
+                [
+                    InlineKeyboardButton("Daily", callback_data="ortho:run:daily_pearls"),
+                    InlineKeyboardButton("Gray quiz", callback_data="ortho:run:quiz"),
+                ],
+                [InlineKeyboardButton("More options →", callback_data="ortho:more")],
+            ])
+        except Exception as exc:
+            logger.debug("[%s] Could not build Ortho menu markup: %s", self.name, exc, exc_info=True)
+            return None
+
+    def _ortho_more_reply_markup(self) -> "InlineKeyboardMarkup":
+        """Return secondary Ortho Teacher actions without crowding the home menu."""
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Full bank", callback_data="ortho:run:quiz_all"),
+                InlineKeyboardButton("Choose chapter", callback_data="ortho:chapters"),
+            ],
+            [
+                InlineKeyboardButton("Quiz stats", callback_data="ortho:run:stats"),
+                InlineKeyboardButton("Source check", callback_data="ortho:prompt:dry_run"),
+            ],
+            [InlineKeyboardButton("◀ Back", callback_data="ortho:back")],
+        ])
+
+    def _ortho_chapter_reply_markup(self) -> "InlineKeyboardMarkup":
+        """Return a compact chapter picker for Gray's Anatomy Review quizzes."""
+        chapters = [
+            ("Upper Limb", "Upper Limb"),
+            ("Lower Limb", "Lower Limb"),
+            ("Back", "Back"),
+            ("Thorax", "Thorax"),
+            ("Abdomen", "Abdomen"),
+            ("Pelvis", "Pelvis and Perineum"),
+            ("Head & Neck", "Head and Neck"),
+        ]
+        buttons = [
+            InlineKeyboardButton(label, callback_data=f"ortho:chapter:{chapter}")
+            for label, chapter in chapters
+        ]
+        rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+        rows.append([InlineKeyboardButton("◀ Back", callback_data="ortho:back")])
+        return InlineKeyboardMarkup(rows)
+
+    def _ortho_menu_text(self) -> str:
+        return (
+            "## Ortho Teacher\n\n"
+            "Tap a numbered option. Commands still work if you prefer typing.\n\n"
+            "1. *Pearls on topic* — I’ll ask for the topic.\n"
+            "2. *Pearls on topic* — 3 cited practical pearls.\n"
+            "3. *Gray quiz* — ortho-focused Gray’s Anatomy Review MCQ.\n"
+            "4. *Full bank quiz* — MCQ from any Gray’s chapter.\n"
+            "5. *Choose chapter* — pick a Gray’s chapter.\n"
+            "6. *Quiz stats* — attempts and misses.\n"
+            "7. *Source check* — I’ll ask for a topic and show retrieval evidence."
+        )
+
+    def _ortho_more_text(self) -> str:
+        return (
+            "## Ortho Teacher — More\n\n"
+            "*Full bank* — Gray MCQ from any chapter.\n"
+            "*Choose chapter* — target a Gray anatomy region.\n"
+            "*Quiz stats* — attempts and misses.\n"
+            "*Source check* — inspect retrieved evidence before a lesson."
+        )
+
+    def _ortho_save_state_dir(self) -> Path:
+        """Return the private callback state directory for explicit Ask saves."""
+        from hermes_constants import get_hermes_home
+
+        return get_hermes_home() / "state" / "telegram_ortho_saves"
+
+    def _store_ortho_save_payload(
+        self,
+        *,
+        chat_id: str,
+        user_id: Optional[str],
+        thread_id: Optional[int],
+        topic: str,
+        content: str,
+    ) -> Optional[str]:
+        """Persist the exact Ask answer for a later authorized callback."""
+        if not content.strip() or content.startswith("Ortho Teacher failed") or "timed out after" in content:
+            return None
+        try:
+            save_id = uuid.uuid4().hex[:12]
+            state_dir = self._ortho_save_state_dir()
+            state_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "chat_id": str(chat_id),
+                "user_id": str(user_id or ""),
+                "thread_id": str(thread_id) if thread_id is not None else None,
+                "topic": topic.strip(),
+                "content": content,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+            (state_dir / f"{save_id}.json").write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+            return save_id
+        except Exception:
+            logger.warning("[%s] Could not stage Ortho Ask answer for Obsidian save", self.name, exc_info=True)
+            return None
+
+    def _ortho_save_reply_markup(self, save_id: Optional[str]) -> Optional["InlineKeyboardMarkup"]:
+        if not save_id:
+            return None
+        try:
+            return InlineKeyboardMarkup([[
+                InlineKeyboardButton("📥 Save to Obsidian", callback_data=f"ortho-save:{save_id}"),
+            ]])
+        except Exception:
+            logger.debug("[%s] Could not build Ortho save markup", self.name, exc_info=True)
+            return None
+
+    def _save_ortho_answer_to_vault(self, save_id: str, payload: Dict[str, Any]) -> Path:
+        """Write one explicitly requested Ask answer without auto-classifying it."""
+        from hermes_constants import get_hermes_home
+
+        existing = str(payload.get("saved_path") or "").strip()
+        if existing and Path(existing).exists():
+            return Path(existing)
+        topic = str(payload.get("topic") or "Orthopaedic question").strip()
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            raise ValueError("Saved Ortho Teacher answer has no content.")
+        slug = re.sub(r"[^a-z0-9]+", "-", topic.casefold()).strip("-")[:70] or "orthopaedic-question"
+        note_dir = get_hermes_home() / "vault" / "05 Resources" / "Medicine" / "Orthopaedics" / "Ortho Teacher Questions"
+        note_dir.mkdir(parents=True, exist_ok=True)
+        note_path = note_dir / f"{datetime.now().strftime('%Y-%m-%d')}-{slug}-{save_id[:6]}.md"
+        title = f"Ortho Teacher — {topic}"
+        note = (
+            "---\n"
+            f"title: {json.dumps(title, ensure_ascii=False)}\n"
+            "tags:\n  - orthopaedics\n  - ortho-teacher\n  - telegram-capture\n"
+            f"captured: {datetime.now(timezone.utc).date().isoformat()}\n---\n\n"
+            f"# {title}\n\n"
+            "> Saved on request from the Ortho Teacher Telegram **Ask** workflow. Educational reference only.\n\n"
+            f"{content}\n"
+        )
+        note_path.write_text(note, encoding="utf-8")
+        payload["saved_path"] = str(note_path)
+        (self._ortho_save_state_dir() / f"{save_id}.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+        return note_path
+
+    async def _send_ortho_output(
+        self,
+        chat_id: str,
+        text: str,
+        *,
+        thread_id: Optional[int] = None,
+        save_to_obsidian: bool = False,
+        topic: str = "",
+        user_id: Optional[str] = None,
+    ) -> None:
+        metadata: Dict[str, Any] = {"thread_id": str(thread_id)} if thread_id is not None else {}
+        if save_to_obsidian:
+            save_id = self._store_ortho_save_payload(
+                chat_id=str(chat_id), user_id=user_id, thread_id=thread_id, topic=topic, content=text,
+            )
+            if save_id:
+                metadata["ortho_save_id"] = save_id
+        await self.send(chat_id=str(chat_id), content=text, metadata=metadata)
+
+    async def _handle_quiz_callback(self, query, data: str, cb: Dict[str, Any]) -> None:
+        """``quiz:<quiz_id>:<choice>`` — grade and render a local study quiz response."""
+        parts = data.split(":", 2)
+        if len(parts) != 3:
+            await query.answer(text="Invalid quiz data.")
+            return
+        _prefix, quiz_id, choice = parts
+        if not await self._callback_authorized(query, cb, "⛔ You are not authorized to answer this quiz."):
+            return
+        try:
+            from hermes_constants import get_hermes_home
+            quiz_path = get_hermes_home() / "state" / "telegram_quizzes" / f"{quiz_id}.json"
+            quiz = json.loads(quiz_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.error("[%s] Failed to load Telegram quiz %s: %s", self.name, quiz_id, exc, exc_info=True)
+            await query.answer(text="Quiz data was not found.")
+            return
+        correct = str(quiz.get("correct", "")).upper()
+        choice = choice.upper()
+        is_correct = choice == correct
+        await query.answer(text="✅ Correct" if is_correct else f"❌ Incorrect — answer is {correct}")
+        options = quiz.get("options", {}) or {}
+        selected_text = options.get(choice, choice)
+        correct_text = options.get(correct, correct)
+        explanation = str(quiz.get("explanation", "")).strip()
+        source = str(quiz.get("source", "")).strip()
+        title = str(
+            quiz.get("title")
+            or quiz.get("qid")
+            or "Gray's Anatomy Review question"
+        ).strip()
+        question = str(quiz.get("question", "")).strip()
+        option_lines = [
+            f"{letter}. {options[letter]}"
+            for letter in ["A", "B", "C", "D", "E"]
+            if letter in options
+        ]
+        original_block = "\n".join(
+            part
+            for part in [
+                f"## {title}" if title else "",
+                question,
+                "\n".join(option_lines),
+            ]
+            if part
+        )
+        result_text = f"{original_block}\n\n" if original_block else ""
+        result_text += (
+            f"You picked *{choice}. {selected_text}*\n\n"
+            f"{'✅ Correct.' if is_correct else f'❌ Incorrect. Correct answer: *{correct}. {correct_text}*'}\n\n"
+            f"{explanation}"
+        )
+        if source:
+            result_text += f"\n\nSource: {source}"
+        self._record_quiz_attempt(quiz, choice, is_correct=is_correct)
+        try:
+            await query.edit_message_text(
+                text=result_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=None,
+                **self._link_preview_kwargs(),
+            )
+        except Exception as exc:
+            logger.warning("[%s] Failed to edit quiz callback message: %s", self.name, exc, exc_info=True)
+            if query.message:
+                send_kwargs: Dict[str, Any] = {
+                    "chat_id": int(query.message.chat_id),
+                    "text": result_text,
+                    "parse_mode": ParseMode.MARKDOWN,
+                    **self._link_preview_kwargs(),
+                }
+                thread_id = getattr(query.message, "message_thread_id", None)
+                if thread_id is not None:
+                    send_kwargs["message_thread_id"] = thread_id
+                await self._bot.send_message(**send_kwargs)
+
+    async def _handle_ortho_save_callback(self, query, data: str, cb: Dict[str, Any]) -> None:
+        """Save a pending Ask answer only for the original authorized chat/user."""
+        save_id = data.split(":", 1)[1] if ":" in data else ""
+        if not save_id or not await self._callback_authorized(
+            query, cb, "⛔ You are not authorized to save this answer."
+        ):
+            return
+        try:
+            payload_path = self._ortho_save_state_dir() / f"{save_id}.json"
+            payload = json.loads(payload_path.read_text(encoding="utf-8"))
+            caller_id = str(getattr(query.from_user, "id", ""))
+            if (
+                str(payload.get("chat_id", "")) != str(cb["chat_id"] or "")
+                or str(payload.get("user_id", "")) != caller_id
+            ):
+                await query.answer(text="⛔ This saved answer belongs to a different chat or user.")
+                return
+            note_path = self._save_ortho_answer_to_vault(save_id, payload)
+        except Exception:
+            logger.warning("[%s] Could not save Ortho Teacher answer", self.name, exc_info=True)
+            await query.answer(text="Could not save this answer.")
+            return
+        await query.answer(text="Saved to Obsidian.")
+        with contextlib.suppress(Exception):
+            await query.edit_message_reply_markup(reply_markup=None)
+        logger.info("[%s] Saved Ortho Teacher answer to %s", self.name, note_path)
+
+    async def _handle_ortho_callback(self, query, data: str, cb: Dict[str, Any]) -> None:
+        """``ortho:...`` — drive the Ortho Teacher inline menu."""
+        if not await self._callback_authorized(query, cb, "⛔ You are not authorized to use this menu."):
+            return
+        caller_id = str(getattr(query.from_user, "id", ""))
+        chat_id = str(cb["chat_id"] or "")
+        thread_id = cb["thread_id"]
+        key = self._ortho_interaction_key(chat_id=cb["chat_id"], user_id=caller_id, thread_id=thread_id)
+        if data == "ortho:more":
+            await query.edit_message_text(
+                text=self._ortho_more_text(), parse_mode=ParseMode.MARKDOWN,
+                reply_markup=self._ortho_more_reply_markup())
+            await query.answer()
+            return
+        if data == "ortho:back":
+            await query.edit_message_text(text=self._ortho_menu_text(), parse_mode=ParseMode.MARKDOWN,
+                reply_markup=self._ortho_menu_reply_markup_for_content("## Ortho Teacher\n\nWhat would you like for this request?"))
+            await query.answer()
+            return
+        if data == "ortho:chapters":
+            await query.edit_message_text(text="## Ortho Teacher\n\nChoose a Gray's Anatomy Review chapter:",
+                parse_mode=ParseMode.MARKDOWN, reply_markup=self._ortho_chapter_reply_markup())
+            await query.answer()
+            return
+        if data.startswith("ortho:prompt:"):
+            mode = data.split(":", 2)[2]
+            if mode not in {"topic", "pearls", "dry_run"}:
+                await query.answer(text="Unknown Ortho Teacher option.")
+                return
+            self._ortho_prompt_state[key] = mode
+            prompt = ("Send the orthopaedic topic/question for a *general sourced answer*.\n\nExample: `what is osteolysis`, `mallet finger`, `posterior hip approach`"
+                if mode == "topic" else "Send the orthopaedic topic for *3 cited practical pearls*.\n\nExample: `mallet finger`, `posterior hip approach`, `ankle syndesmosis`"
+                if mode == "pearls" else "Send the topic for *source/retrieval check*.\n\nExample: `mallet finger`")
+            await query.edit_message_text(text=prompt, parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀ Back", callback_data="ortho:back")]]))
+            await query.answer(text="Waiting for topic…")
+            return
+        if data.startswith("ortho:chapter:"):
+            chapter = data.split(":", 2)[2]
+            await query.answer(text=f"Running {chapter} quiz…")
+            await self._edit_md_quiet(query, f"Running Gray quiz for *{chapter}*…")
+            await self._send_ortho_output(chat_id, await self._run_ortho_teacher_script(["--quiz", "--quiz-chapter", chapter]), thread_id=thread_id)
+            return
+        if data.startswith("ortho:run:"):
+            args = self._ortho_args_for_action(data.split(":", 2)[2])
+            if args is None:
+                await query.answer(text="Unknown Ortho Teacher option.")
+                return
+            await query.answer(text="Running Ortho Teacher…")
+            await self._edit_md_quiet(query, "Running Ortho Teacher…")
+            await self._send_ortho_output(chat_id, await self._run_ortho_teacher_script(args), thread_id=thread_id)
+            return
+        await query.answer(text="Unknown Ortho Teacher option.")
 
     async def _handle_update_prompt_callback(self, query, data: str, cb: dict[str, Any]) -> None:
         """``update_prompt:<y|n>`` — forward the answer to the update process."""
