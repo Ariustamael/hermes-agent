@@ -676,6 +676,35 @@ def tasks_list(args):
     print(json.dumps(tasks, indent=2, ensure_ascii=False))
 
 
+def tasks_update(args):
+    """Update a Google Task with concise, user-facing fields."""
+    body = {}
+    if args.title is not None:
+        body["title"] = args.title
+    if args.notes is not None:
+        body["notes"] = args.notes
+    if args.due is not None:
+        body["due"] = args.due
+    if not body:
+        print("ERROR: provide at least one of --title, --notes, or --due", file=sys.stderr)
+        sys.exit(2)
+
+    service = build_service("tasks", "v1")
+    result = service.tasks().patch(
+        tasklist=args.list,
+        task=args.task_id,
+        body=body,
+    ).execute()
+    print(json.dumps({
+        "status": "updated",
+        "id": result.get("id", ""),
+        "title": result.get("title", ""),
+        "notes": result.get("notes", ""),
+        "due": result.get("due", ""),
+        "updated": result.get("updated", ""),
+    }, indent=2, ensure_ascii=False))
+
+
 # =========================================================================
 # Drive
 # =========================================================================
@@ -1277,6 +1306,14 @@ def main():
     p.add_argument("--show-completed", action="store_true", help="Include completed tasks")
     p.add_argument("--show-hidden", action="store_true", help="Include hidden tasks")
     p.set_defaults(func=tasks_list)
+
+    p = tasks_sub.add_parser("update")
+    p.add_argument("task_id")
+    p.add_argument("--list", required=True, help="Task list ID")
+    p.add_argument("--title", default=None)
+    p.add_argument("--notes", default=None)
+    p.add_argument("--due", default=None, help="Due date/timestamp in RFC 3339 format")
+    p.set_defaults(func=tasks_update)
 
     # --- Drive ---
     drv = sub.add_parser("drive")
