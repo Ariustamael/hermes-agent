@@ -114,6 +114,20 @@ async def test_math_outside_details_still_uses_rich_send():
 
 
 @pytest.mark.asyncio
+async def test_headings_use_rich_send_for_native_telegram_hierarchy():
+    adapter = _make_adapter()
+    content = "## MPFL reconstruction\n\n### Graft fixation\nUse a low-profile fixation plan."
+
+    result = await adapter.send("12345", content)
+
+    assert result.success is True
+    markdown = _rich_api_kwargs(adapter)["rich_message"]["markdown"]
+    assert markdown.startswith("## MPFL reconstruction\n\n### Graft fixation")
+    assert "Use a low-profile fixation plan." in markdown
+    adapter._bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_astral_cjk_rich_content_skips_rich_send_to_avoid_tdesktop_garble():
     adapter = _make_adapter()
 
