@@ -4394,7 +4394,8 @@ from cron.scheduler_tick import tick
 # ---------------------------------------------------------------------------
 from cron.scheduler_delivery import (
     _deliver_result, _delivery_lane_value, _normalize_deliver_value, _resolve_delivery_target,
-    _resolve_delivery_targets,
+    _resolve_delivery_targets, _extract_hermes_update_autofix_action,
+    _queue_hermes_update_autofix, _send_hermes_update_autofix_prompt,
 )
 from cron.scheduler_script import (
     _get_session_db_timeout, _run_job_script_with_claim_heartbeat, _start_heartbeat_thread,

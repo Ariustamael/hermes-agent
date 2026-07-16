@@ -23,6 +23,37 @@ def _make_adapter():
 
 
 class TestSendSlashConfirm:
+    @pytest.mark.asyncio
+    async def test_custom_labels_can_disable_permanent_approval(self, monkeypatch):
+        adapter = _make_adapter()
+        adapter._bot.send_message = AsyncMock(
+            return_value=SimpleNamespace(message_id=9)
+        )
+        import plugins.platforms.telegram.adapter as telegram_adapter
+
+        monkeypatch.setattr(
+            telegram_adapter,
+            "InlineKeyboardButton",
+            lambda text, callback_data: (text, callback_data),
+        )
+        monkeypatch.setattr(telegram_adapter, "InlineKeyboardMarkup", lambda rows: rows)
+
+        await adapter.send_slash_confirm(
+            chat_id="100",
+            title="Confirm",
+            message="blocked",
+            session_key="sk",
+            confirm_id="cid-custom",
+            approve_label="🛠 Autofix safely",
+            cancel_label="Keep blocked",
+            allow_permanent=False,
+        )
+
+        rows = adapter._bot.send_message.call_args.kwargs["reply_markup"]
+        assert rows == [
+            [("🛠 Autofix safely", "sc:once:cid-custom")],
+            [("Keep blocked", "sc:cancel:cid-custom")],
+        ]
 
     @pytest.mark.asyncio
     async def test_uses_markdown_v2_and_escapes_special_chars(self):
@@ -48,7 +79,6 @@ class TestSendSlashConfirm:
 
         assert result.success is True
         assert "MARKDOWN_V2" in repr(sent["parse_mode"])
-        # Underscores and dots must be escaped by format_message
         assert "script\\_name" in sent["text"]
         assert "\\." in sent["text"]
 

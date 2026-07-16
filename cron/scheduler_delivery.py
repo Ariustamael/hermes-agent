@@ -18,12 +18,81 @@ import shutil
 import subprocess
 import sys
 import threading
+import uuid
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("cron.scheduler")
+
+
+# A maintenance cron can opt into this narrowly-scoped Telegram action. The marker is
+# stripped before ordinary delivery so it never leaks to other platforms.
+_HERMES_UPDATE_AUTOFIX_MARKER = "[[HERMES_UPDATE_AUTOFIX_BUTTON]]"
+
+
+def _extract_hermes_update_autofix_action(content: str) -> tuple[str, bool]:
+    if _HERMES_UPDATE_AUTOFIX_MARKER not in content:
+        return content, False
+    return content.replace(_HERMES_UPDATE_AUTOFIX_MARKER, "").strip(), True
+
+
+def _queue_hermes_update_autofix(source_job: dict, *, chat_id: str, thread_id: Optional[str]) -> str:
+    """Queue one explicitly authorized, audited repair job without changing its recurring source job."""
+    from cron.jobs import create_job, trigger_job
+
+    origin = {"platform": "telegram", "chat_id": str(chat_id)}
+    if thread_id:
+        origin["thread_id"] = str(thread_id)
+    repair = create_job(
+        prompt="""Chester explicitly pressed the Telegram Autofix Hermes update button.
+
+Perform one supervised repair attempt for Hermes local-customization maintenance.
+Repository: /home/chester/.hermes/hermes-agent
+Branch: chester/local-customizations
+
+First inspect git status, fetch origin, and determine the exact blocker. Preserve all user work: never discard, reset, or auto-stash uncommitted changes. Create a dated backup plus safety branch/tag before any rebase. If changes are coherent, run focused tests, commit them in logical groups, then rebase onto origin/main. Resolve only clear conflicts; stop and report if a resolution is ambiguous. Verify final divergence, working tree, relevant pytest tests, and dashboard build. Do not restart gateway or dashboard services. Report exact actions, commits, validation output, and remaining blockers. Do not schedule further jobs.
+""",
+        schedule="every 1m", name="Hermes update autofix (authorized)", repeat=1,
+        deliver="origin", origin=origin, skills=source_job.get("skills") or None,
+        enabled_toolsets=source_job.get("enabled_toolsets") or None,
+        workdir=source_job.get("workdir") or "/home/chester/.hermes/hermes-agent",
+        attach_to_session=True,
+    )
+    trigger_job(repair["id"])
+    _sched._notify_provider_jobs_changed()
+    return f"✅ Autofix queued as `{repair['id']}`. I will report the inspected repair result here."
+
+
+async def _send_hermes_update_autofix_prompt(adapter: Any, job: dict, *, chat_id: str,
+                                              thread_id: Optional[str], message: str) -> bool:
+    """Render the authorization through the normal Telegram confirmation state machine."""
+    from tools import slash_confirm
+
+    session_key = f"cron-autofix:{job['id']}:{uuid.uuid4().hex[:12]}"
+    confirm_id = uuid.uuid4().hex[:12]
+
+    async def on_choice(choice: str) -> str:
+        if choice != "once":
+            return "No changes made; Hermes update remains blocked."
+        try:
+            # Resolve via scheduler's compatibility re-export so legacy plugins and tests
+            # can monkeypatch the public scheduler entry point during the split-module transition.
+            return _sched._queue_hermes_update_autofix(job, chat_id=chat_id, thread_id=thread_id)
+        except Exception as exc:
+            logger.exception("Could not queue Hermes update autofix for job %s", job["id"])
+            return f"❌ Could not queue autofix: {exc}"
+
+    slash_confirm.register(session_key, confirm_id, "hermes-update-autofix", on_choice)
+    result = await adapter.send_slash_confirm(
+        chat_id=chat_id, title="Hermes update blocked",
+        message=(f"{message}\n\nChoose **Approve Once** to run the safe autofix. It will inspect, back up, test, commit only coherent local work, and rebase; it will not discard or auto-stash work."),
+        session_key=session_key, confirm_id=confirm_id,
+        metadata={"thread_id": str(thread_id)} if thread_id else None,
+        approve_label="🛠 Autofix safely", cancel_label="Keep blocked", allow_permanent=False,
+    )
+    return bool(result and getattr(result, "success", False))
 
 
 # Validates user-supplied delivery platform names, preventing env-var enumeration via crafted names.
@@ -1979,6 +2048,7 @@ def _deliver_result(
     ``failure_deliver`` override when present (NS-788). Returns None on success, else an error."""
     job.pop("_bot_chat_delivery_receipts", None)
     job.pop("_notification_all_targets_suppressed", None)
+    content, request_hermes_update_autofix = _extract_hermes_update_autofix_action(content)
     targets = _resolve_delivery_targets(job, for_failure=for_failure)
     if not targets:
         _record_delivery_verification(job, [])
@@ -2104,6 +2174,28 @@ def _deliver_result(
         if t is None:
             continue
         target_errors: list = []
+        if request_hermes_update_autofix and t.platform_name == "telegram" and t.live_adapter_ready:
+            try:
+                from agent.async_utils import safe_schedule_threadsafe
+
+                future = safe_schedule_threadsafe(
+                    _send_hermes_update_autofix_prompt(
+                        t.runtime_adapter, job, chat_id=str(t.chat_id),
+                        thread_id=str(t.thread_id) if t.thread_id is not None else None,
+                        message=delivery_content,
+                    ),
+                    loop,
+                )
+                if future is not None and future.result(timeout=30):
+                    _maybe_mirror_cron_delivery(
+                        job, t.platform_name, t.chat_id, mirror_text, thread_id=t.thread_id,
+                        user_id=t.origin_user_id, enabled=t.mirror_this_target,
+                    )
+                    continue
+                target_errors.append("Telegram autofix button delivery was unavailable")
+            except Exception as exc:
+                target_errors.append(f"Telegram autofix button delivery failed: {exc}")
+                logger.warning("Job '%s': Telegram autofix button failed; falling back to text: %s", job["id"], exc)
         delivered = t.live_adapter_ready and _deliver_via_live_adapter(
             t, cleaned_delivery_content, media_files,
             target_errors=target_errors, delivery_errors=delivery_errors,
