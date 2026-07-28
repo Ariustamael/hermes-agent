@@ -82,4 +82,55 @@ class TestSendSlashConfirm:
         assert "script\\_name" in sent["text"]
         assert "\\." in sent["text"]
 
+    @pytest.mark.asyncio
+    async def test_stores_reply_state_for_direct_text_fallback(self):
+        adapter = _make_adapter()
+        adapter._bot.send_message = AsyncMock(return_value=SimpleNamespace(message_id=8))
 
+        await adapter.send_slash_confirm(
+            chat_id="100",
+            title="Confirm",
+            message="reload-mcp",
+            session_key="my-session",
+            confirm_id="cid2",
+        )
+
+        assert adapter._slash_confirm_state["cid2"] == "my-session"
+        assert adapter._slash_confirm_reply_state[("100", 8)] == "cid2"
+
+    @pytest.mark.asyncio
+    async def test_direct_approve_reply_resolves_only_the_replied_prompt(self):
+        adapter = _make_adapter()
+        adapter.send = AsyncMock()
+        adapter._slash_confirm_state["cid-approve"] = "cron-autofix:maintenance:one"
+        adapter._slash_confirm_reply_state[("47417084", 700)] = "cid-approve"
+        from tools import slash_confirm
+
+        async def handle_choice(choice):
+            assert choice == "once"
+            return "✅ Autofix queued as `repair123`."
+
+        slash_confirm.register("cron-autofix:maintenance:one", "cid-approve", "hermes-update-autofix", handle_choice)
+        msg = MagicMock()
+        msg.text = "Approve"
+        msg.chat.id = 47417084
+        msg.message_thread_id = None
+        msg.reply_to_message.message_id = 700
+
+        assert await adapter._handle_slash_confirm_text_reply(msg) is True
+        adapter.send.assert_awaited_once_with("47417084", "✅ Autofix queued as `repair123`.", metadata=None)
+        assert "cid-approve" not in adapter._slash_confirm_state
+        assert ("47417084", 700) not in adapter._slash_confirm_reply_state
+
+    @pytest.mark.asyncio
+    async def test_unrelated_or_nonstandard_text_does_not_confirm(self):
+        adapter = _make_adapter()
+        adapter._slash_confirm_state["cid-pending"] = "session-pending"
+        adapter._slash_confirm_reply_state[("47417084", 701)] = "cid-pending"
+        msg = MagicMock()
+        msg.text = "yes please"
+        msg.chat.id = 47417084
+        msg.reply_to_message.message_id = 701
+
+        assert await adapter._handle_slash_confirm_text_reply(msg) is False
+        assert adapter._slash_confirm_state["cid-pending"] == "session-pending"

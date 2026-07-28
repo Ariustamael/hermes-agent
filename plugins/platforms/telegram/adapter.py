@@ -704,6 +704,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         self._choice_picker_state: dict[str, dict] = {}
         self._approval_state: dict[int, str] = {}  # message_id → session_key
         self._slash_confirm_state: dict[str, str] = {}  # confirm_id → session_key
+        self._slash_confirm_reply_state: dict[tuple[str, int], str] = {}
         self._clarify_state: dict[str, str] = {}  # clarify_id → session_key
         # "important" (default): only final responses, approvals and slash confirmations notify;
         # "all": every message notifies (display.platforms.telegram.notifications).
@@ -4272,7 +4273,10 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             # Budget the MarkdownV2 rendering (escaping expands text), not the raw message.
             preview = self.format_message(self._ea_fit(
                 message, self.MAX_MESSAGE_LENGTH - utf16_len(self.format_message("...")), escape=self.format_message))
-            return preview, keyboard, lambda msg: self._slash_confirm_state.__setitem__(confirm_id, session_key)
+            def remember(msg):
+                self._slash_confirm_state[confirm_id] = session_key
+                self._slash_confirm_reply_state[(str(chat_id), int(msg.message_id))] = confirm_id
+            return preview, keyboard, remember
         return await self._send_prompt(
             "send_slash_confirm", chat_id, metadata, build, thread_id=self._metadata_thread_id(metadata), reply_to_mode=self._reply_to_mode)
 
@@ -4786,6 +4790,7 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             _toast("platform.telegram.slash_confirm.already_resolved"))
         if not session_key:
             return
+        self._drop_slash_confirm_reply_state(confirm_id)
         label_key = {"once": "slash_confirm.resolved_once", "always": "slash_confirm.resolved_always", "cancel": "slash_confirm.resolved_cancel"}.get(
             choice, "approval.resolved_generic")
         user_display = getattr(query.from_user, "first_name", None) or t("platform.telegram.user_fallback")
@@ -6856,6 +6861,45 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             level, "[Telegram] Blocked %s %s in chat %s", what, getattr(getattr(msg, "from_user", None), "id", None),
             getattr(getattr(msg, "chat", None), "id", None))
 
+    def _drop_slash_confirm_reply_state(self, confirm_id: str) -> None:
+        for key, pending_id in list(self._slash_confirm_reply_state.items()):
+            if pending_id == confirm_id:
+                self._slash_confirm_reply_state.pop(key, None)
+
+    async def _handle_slash_confirm_text_reply(self, msg: Any) -> bool:
+        """Accept exact confirmation phrases only when replying to the original prompt."""
+        reply_to = getattr(msg, "reply_to_message", None)
+        reply_id = getattr(reply_to, "message_id", None)
+        chat_id = getattr(getattr(msg, "chat", None), "id", None)
+        if reply_id is None or chat_id is None:
+            return False
+        confirm_id = self._slash_confirm_reply_state.get((str(chat_id), int(reply_id)))
+        choices = {
+            "approve": "once", "approve once": "once", "autofix": "once",
+            "autofix safely": "once", "cancel": "cancel", "keep blocked": "cancel",
+        }
+        choice = choices.get((getattr(msg, "text", "") or "").strip().casefold())
+        if not confirm_id or choice is None:
+            return False
+        session_key = self._slash_confirm_state.pop(confirm_id, None)
+        self._drop_slash_confirm_reply_state(confirm_id)
+        if not session_key:
+            await self.send(str(chat_id), "This prompt has already been resolved.")
+            return True
+        try:
+            from tools import slash_confirm as slash_confirm
+            result_text = await slash_confirm.resolve(session_key, confirm_id, choice)
+            if result_text:
+                thread_id = getattr(msg, "message_thread_id", None)
+                await self.send(
+                    str(chat_id), result_text,
+                    metadata={"thread_id": str(thread_id)} if thread_id is not None else None,
+                )
+        except Exception as exc:
+            logger.error("[%s] slash-confirm text reply failed: %s", self.name, exc, exc_info=True)
+            await self.send(str(chat_id), "❌ Could not process that confirmation reply.")
+        return True
+
     def _gate_or_observe(self, msg, update, msg_type: MessageType) -> bool:
         """Group trigger gate; observes unmentioned chatter when configured. True = proceed."""
         if self._should_process_message(msg):
@@ -6881,6 +6925,8 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         # Auth check first: blocked users must not reach batching, the observed transcript, or the agent.
         if not self._is_user_authorized_from_message(msg):
             self._log_blocked_user(msg)
+            return
+        if await self._handle_slash_confirm_text_reply(msg):
             return
         if not self._gate_or_observe(msg, update, MessageType.TEXT):
             return
