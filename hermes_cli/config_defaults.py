@@ -817,6 +817,11 @@ DEFAULT_CONFIG = {
 
     "display": {
         "compact": False,
+        # Keep the classic welcome panel, but allow a quieter start that omits
+        # the tool, MCP, and skills catalogs. The capabilities remain enabled.
+        "startup_banner": {
+            "show_capabilities": True,
+        },
         "personality": "",
         "resume_display": "full",
         # Recap tuning for /resume and startup resume.

@@ -90,6 +90,12 @@ class TestMaxTurnsResolution:
 
 
 
+class TestCompactDisplayConfig:
+    def test_display_compact_applies_without_a_runtime_override(self):
+        cli = _make_cli(config_overrides={"display": {"compact": True, "tool_progress": "all"}})
+        assert cli.compact is True
+
+
 class TestFallbackChainInit:
     def test_merges_new_and_legacy_fallback_config(self):
         cli = _make_cli(config_overrides={

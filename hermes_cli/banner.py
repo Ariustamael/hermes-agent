@@ -474,6 +474,12 @@ def compute_toolset_availability(enabled_toolsets: list[str] | None = None) -> d
     """
     from model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
     enabled_toolsets = enabled_toolsets or []
+    try:
+        from hermes_cli.config import load_config as _load_banner_config
+        _startup_banner = (_load_banner_config().get("display") or {}).get("startup_banner") or {}
+        _show_capabilities = bool(_startup_banner.get("show_capabilities", True))
+    except Exception:
+        _show_capabilities = True
     _, unavailable_toolsets = check_tool_availability(quiet=True)
     # The availability check walks the GLOBAL registry, so it includes toolsets outside this
     # agent's platform set (e.g. `discord` on a CLI session) which must never surface in
@@ -688,6 +694,12 @@ def build_welcome_banner(
         from model_tools import get_toolset_for_tool
     tools = tools or []
     enabled_toolsets = enabled_toolsets or []
+    try:
+        from hermes_cli.config import load_config as _load_banner_config
+        _startup_banner = (_load_banner_config().get("display") or {}).get("startup_banner") or {}
+        _show_capabilities = bool(_startup_banner.get("show_capabilities", True))
+    except Exception:
+        _show_capabilities = True
     if availability is None:
         availability = compute_toolset_availability(enabled_toolsets)
     _enabled_ts = {str(t) for t in enabled_toolsets}
@@ -749,7 +761,8 @@ def build_welcome_banner(
     layout_table = Table.grid(padding=(0, 2))
     layout_table.add_column("left", justify="left")
     layout_table.add_column("right", justify="left")
-    layout_table.add_row("\n".join(left_lines), "\n".join(right_lines))
+    right_content = "\n".join(right_lines) if _show_capabilities else f"[dim {dim}]/help for commands[/]"
+    layout_table.add_row("\n".join(left_lines), right_content)
     version_label = format_banner_version_label()
     release_info = get_latest_release_tag()
     if release_info:

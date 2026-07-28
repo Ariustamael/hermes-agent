@@ -81,3 +81,44 @@ def test_baked_banner_uses_live_identity(monkeypatch):
 
     monkeypatch.setattr(version_info, "get_code_identity", lambda: {"short_sha": "a1b2c3d4"})
     assert banner._baked_banner_state() == {"upstream": "a1b2c3d4", "local": "a1b2c3d4", "ahead": 0}
+
+
+def test_banner_can_hide_capability_catalogs(tmp_path, monkeypatch):
+    """The compact startup preference hides tools, MCP status, and skills."""
+    import yaml
+
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    (home / "config.yaml").write_text(
+        yaml.safe_dump({"display": {"startup_banner": {"show_capabilities": False}}})
+    )
+
+    with (
+        patch.object(model_tools, "check_tool_availability", return_value=(["file"], [])),
+        patch.object(banner, "get_available_skills", return_value={"creative": ["ascii-art"]}),
+        patch.object(banner, "get_update_result", return_value=None),
+        patch.object(
+            tools.mcp_tool,
+            "get_mcp_status",
+            return_value=[{"name": "documents", "transport": "stdio", "tools": 10, "connected": True}],
+        ),
+    ):
+        console = Console(record=True, force_terminal=False, color_system=None, width=160)
+        banner.build_welcome_banner(
+            console=console,
+            model="m",
+            cwd="/tmp",
+            tools=[{"function": {"name": "read_file"}}],
+            enabled_toolsets=["file", "skills"],
+            get_toolset_for_tool=lambda n: "file",
+        )
+
+    output = console.export_text()
+    assert "Available Tools" not in output
+    assert "MCP Servers" not in output
+    assert "Available Skills" not in output
+    assert "read_file" not in output
+    assert "documents" not in output
+    assert "ascii-art" not in output
+    assert "/help for commands" in output
