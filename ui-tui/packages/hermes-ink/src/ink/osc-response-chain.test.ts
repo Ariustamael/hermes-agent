@@ -51,6 +51,23 @@ describe('OSC 11 reply chain', () => {
     }
   })
 
+  it('reports a pending query until its terminal response is dispatched', async () => {
+    const stdout = { write: () => true } as unknown as NodeJS.WriteStream
+    const querier = new TerminalQuerier(stdout)
+    const pending = querier.send(oscColor(11))
+
+    expect(querier.hasPending()).toBe(true)
+
+    for (const response of drainResponses('\x1b]11;rgb:0000/0000/0000\x07')) {
+      if (response.kind === 'response') {
+        querier.onResponse(response.response)
+      }
+    }
+
+    await pending
+    expect(querier.hasPending()).toBe(false)
+  })
+
   it('reply interleaved with keystrokes still resolves', async () => {
     const stdout = { write: () => true } as unknown as NodeJS.WriteStream
     const querier = new TerminalQuerier(stdout)
