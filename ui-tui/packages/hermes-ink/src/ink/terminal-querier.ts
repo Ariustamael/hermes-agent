@@ -136,6 +136,19 @@ export class TerminalQuerier {
   constructor(private stdout: NodeJS.WriteStream) {}
 
   /**
+   * Whether the terminal still owes us one or more query responses.
+   *
+   * Callers that perform the normal ESC-vs-sequence timeout dance can use
+   * this to give a split terminal reply a little extra time. This matters on
+   * remote PTYs: a DA1 reply can arrive as a bare ESC followed by its CSI
+   * bytes in a later read, which is indistinguishable from a user Escape
+   * until the continuation arrives.
+   */
+  hasPending(): boolean {
+    return this.queue.length > 0
+  }
+
+  /**
    * Send a query and wait for its response.
    *
    * Resolves with the response when `query.match` matches an incoming

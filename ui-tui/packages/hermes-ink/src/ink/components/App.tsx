@@ -183,6 +183,11 @@ export default class App extends PureComponent<Props, State> {
   // Timeout durations for incomplete sequences (ms)
   readonly NORMAL_TIMEOUT = 50 // Short timeout for regular esc sequences
   readonly PASTE_TIMEOUT = 500 // Longer timeout for paste operations
+  // Remote PTYs can split a terminal-query reply between its ESC byte and
+  // the following CSI bytes. Give a bare ESC a single longer grace period
+  // while a query is in flight before treating it as a user Escape.
+  readonly QUERY_RESPONSE_ESC_GRACE_TIMEOUT = 250
+  bareEscapeQueryGraceUsed = false
 
   // Terminal query/response dispatch. Responses arrive on stdin (parsed
   // out by parse-keypress) and are routed to pending promise resolvers.
@@ -512,6 +517,25 @@ export default class App extends PureComponent<Props, State> {
     // bracketed paste. Missing paste-end markers otherwise leave every later
     // keystroke trapped in the paste buffer.
     if (!this.keyParseState.incomplete && this.keyParseState.mode !== 'IN_PASTE') {
+      this.bareEscapeQueryGraceUsed = false
+
+      return
+    }
+
+    // A terminal response (for example DA1: ESC[?...c) normally arrives as
+    // one PTY read. Tailscale/SSH and other remote transports may split it
+    // after the initial ESC, however. Flushing that byte at the ordinary
+    // ESCDELAY makes the CSI tail look like user text and inserts capability
+    // data into the composer. Delay once, but only while we have a query
+    // pending, so an ordinary Escape still resolves promptly.
+    if (
+      this.keyParseState.incomplete === '\x1b' &&
+      this.querier.hasPending() &&
+      !this.bareEscapeQueryGraceUsed
+    ) {
+      this.bareEscapeQueryGraceUsed = true
+      this.incompleteEscapeTimer = setTimeout(this.flushIncomplete, this.QUERY_RESPONSE_ESC_GRACE_TIMEOUT)
+
       return
     }
 
@@ -542,6 +566,10 @@ export default class App extends PureComponent<Props, State> {
     // Parse input using our state machine
     const [keys, newState] = parseMultipleKeypresses(this.keyParseState, input)
     this.keyParseState = newState
+
+    if (newState.incomplete !== '\x1b') {
+      this.bareEscapeQueryGraceUsed = false
+    }
 
     // Process ALL keys in a SINGLE discreteUpdates call to prevent
     // "Maximum update depth exceeded" error when many keys arrive at once

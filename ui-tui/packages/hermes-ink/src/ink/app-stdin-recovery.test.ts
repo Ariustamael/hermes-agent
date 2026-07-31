@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './components/App.js'
+import { da1 } from './terminal-querier.js'
 
 // Regression for issue #31486: when processInput throws inside the
 // handleReadable read loop, any bytes still buffered in stdin are stranded
@@ -113,5 +114,56 @@ describe('App.handleReadable error recovery (issue #31486)', () => {
     vi.runAllTimers()
 
     expect((app as any).processInput).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('App split terminal-query response recovery', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('keeps a bare ESC buffered for a pending DA1 reply and never dispatches its CSI tail as input', async () => {
+    const app = makeApp(makeFakeStdin([]))
+    const dispatchKeyboardEvent = app.props.dispatchKeyboardEvent as ReturnType<typeof vi.fn>
+    const pending = app.querier.send(da1())
+
+    app.processInput('\x1b')
+    await vi.advanceTimersByTimeAsync(app.NORMAL_TIMEOUT)
+
+    // The ordinary ESC timeout has elapsed, but the pending terminal query
+    // owns one bounded grace period. No Escape or partial CSI is input.
+    expect(dispatchKeyboardEvent).not.toHaveBeenCalled()
+    expect(app.keyParseState.incomplete).toBe('\x1b')
+
+    app.processInput('[?4;6;7;14;21;22;23;24;28;32;42;52c')
+    await expect(pending).resolves.toMatchObject({ type: 'da1' })
+
+    expect(dispatchKeyboardEvent).not.toHaveBeenCalled()
+    expect(app.keyParseState.incomplete).toBe('')
+  })
+
+  it('dispatches a normal bare Escape after the ordinary timeout when no terminal query is pending', async () => {
+    const app = makeApp(makeFakeStdin([]))
+    const dispatchKeyboardEvent = app.props.dispatchKeyboardEvent as ReturnType<typeof vi.fn>
+
+    app.processInput('\x1b')
+    await vi.advanceTimersByTimeAsync(app.NORMAL_TIMEOUT)
+
+    expect(dispatchKeyboardEvent).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches a user Escape once after the bounded query-response grace expires', async () => {
+    const app = makeApp(makeFakeStdin([]))
+    const dispatchKeyboardEvent = app.props.dispatchKeyboardEvent as ReturnType<typeof vi.fn>
+    void app.querier.send(da1())
+
+    app.processInput('\x1b')
+    await vi.advanceTimersByTimeAsync(app.NORMAL_TIMEOUT + app.QUERY_RESPONSE_ESC_GRACE_TIMEOUT)
+
+    expect(dispatchKeyboardEvent).toHaveBeenCalledTimes(1)
   })
 })
