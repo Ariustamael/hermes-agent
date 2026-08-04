@@ -7,7 +7,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
-import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { Download, Moon, RotateCw, Search, Settings2, Sun } from "lucide-react";
 import { Spinner } from "@nous-research/ui/ui/components/spinner";
 import ChatPage from "@/pages/ChatPage";
