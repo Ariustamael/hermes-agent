@@ -138,6 +138,12 @@ class TestGatewayHelpLines:
                     f"cli_only command /{cmd.name} should not be in gateway help"
 
 
+    def test_includes_configured_quick_commands(self, monkeypatch):
+        import hermes_cli.config as config_mod
+        monkeypatch.setattr(config_mod, "read_raw_config", lambda: {
+            "quick_commands": {"ortho": {"description": "Run Ortho Teacher"}}})
+        assert "`/ortho` -- Run Ortho Teacher" in gateway_help_lines()
+
 
 class TestTelegramBotCommands:
 
@@ -172,6 +178,17 @@ class TestTelegramBotCommands:
         assert "btw" in names
         assert "queue" in names
         assert "steer" in names
+
+    def test_includes_configured_quick_commands(self, monkeypatch):
+        import hermes_cli.config as config_mod
+        monkeypatch.setattr(config_mod, "read_raw_config", lambda: {
+            "quick_commands": {
+                "ortho": {"description": "Run Ortho Teacher"},
+                "poem": {"description": "Poem on demand"},
+            }})
+        commands = dict(telegram_bot_commands(include_plugins=False))
+        assert commands["ortho"] == "Run Ortho Teacher"
+        assert commands["poem"] == "Poem on demand"
 
 
 
