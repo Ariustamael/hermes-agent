@@ -270,6 +270,15 @@ class GatewayVoiceMixin:
         if not self._is_user_authorized_for_source(source):
             logger.debug("Unauthorized voice input from user %d, ignoring", user_id)
             return
+        # Live Discord voice channels can contain sensitive background conversation.
+        # Dispatch only speech that addresses Hermes, unless the existing local opt-out is set.
+        wake_word = os.getenv("DISCORD_VOICE_WAKE_WORD", "Hermes").strip()
+        wake_required = os.getenv("DISCORD_VOICE_REQUIRE_WAKE_WORD", "true").lower() not in (
+            "0", "false", "no", "off"
+        )
+        if wake_required and wake_word and wake_word.lower() not in transcript.lower():
+            logger.info("Ignoring Discord voice input without wake word from user %d in guild %d", user_id, guild_id)
+            return
         if self._is_duplicate_voice_transcript(guild_id, user_id, transcript):
             logger.info("Suppressing duplicate voice transcript for guild=%s user=%s: %s",
                         guild_id, user_id, transcript[:100])
