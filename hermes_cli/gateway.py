@@ -3034,7 +3034,12 @@ def _build_wsl_interop_paths(path_entries: list[str]) -> list[str]:
     for executable in ("powershell.exe", "cmd.exe", "explorer.exe", "wsl.exe"):
         resolved = shutil.which(executable)
         if resolved:
-            candidates.append(str(Path(resolved).parent))
+            resolved_dir = str(Path(resolved).parent)
+            # A unit only needs Windows executables from the mounted Windows filesystem.
+            # Never inherit an arbitrary caller PATH directory merely because a test or shell
+            # resolves a Windows executable name there.
+            if resolved_dir.startswith("/mnt/"):
+                candidates.append(resolved_dir)
     candidates += [
         entry
         for entry in (
