@@ -197,6 +197,42 @@ def test_api_get_credentials_refresh_persists_authorized_user_type(api_module, m
     assert saved["type"] == "authorized_user"
 
 
+def test_api_tasks_update_patches_only_the_requested_fields(api_module, capsys):
+    service = MagicMock()
+    service.tasks.return_value.patch.return_value.execute.return_value = {
+        "id": "task-1",
+        "title": "Updated task",
+        "notes": "Revised notes",
+        "due": "2026-07-20T00:00:00.000Z",
+        "updated": "2026-07-16T14:00:00.000Z",
+    }
+    api_module.build_service = MagicMock(return_value=service)
+    args = api_module.argparse.Namespace(
+        list="list-1",
+        task_id="task-1",
+        title="Updated task",
+        notes="Revised notes",
+        due=None,
+        func=api_module.tasks_update,
+    )
+
+    api_module.tasks_update(args)
+
+    service.tasks.return_value.patch.assert_called_once_with(
+        tasklist="list-1",
+        task="task-1",
+        body={"title": "Updated task", "notes": "Revised notes"},
+    )
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "updated",
+        "id": "task-1",
+        "title": "Updated task",
+        "notes": "Revised notes",
+        "due": "2026-07-20T00:00:00.000Z",
+        "updated": "2026-07-16T14:00:00.000Z",
+    }
+
+
 def test_gmail_search_empty_result_prints_json_array(
     api_module: types.ModuleType,
     monkeypatch: pytest.MonkeyPatch,
