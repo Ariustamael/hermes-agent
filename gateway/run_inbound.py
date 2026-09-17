@@ -1024,16 +1024,15 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
             return await getattr(self, f"_hm_cmd_{canonical}")(event, source, _quick_key)
         return False, None
 
-    async def _hm_run_exec_quick_command(self, command: str, exec_cmd: str) -> str:
-        """Run a ``type: exec`` quick command in the gateway process (30 s cap, sanitized env — the
-        gateway process has every API key in os.environ; output is redacted too)."""
+    async def _hm_run_exec_quick_command(self, command: str, exec_cmd: str, *, timeout: int = 30) -> str:
+        """Run a quick command with a bounded timeout and sanitized environment."""
         try:
             from tools.environments.local import build_subprocess_env
             proc = await asyncio.create_subprocess_shell(
                 exec_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 env=build_subprocess_env(),
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             output = (stdout or stderr).decode().strip()
             if output:
                 from agent.redact import redact_sensitive_text
@@ -1063,12 +1062,43 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
             _denied = self._check_slash_access(source, command)
             if _denied is not None:
                 return True, _denied, command
+            command_name = command or ""
             qtype = qcmd.get("type")
-            if qtype == "exec":
+            if qtype in {"exec", "exec_async"}:
                 exec_cmd = qcmd.get("command", "")
                 if not exec_cmd:
                     return True, t("gateway.quick_command.no_command", command=command), command
-                return True, await self._hm_run_exec_quick_command(command, exec_cmd), command
+                if qcmd.get("pass_args"):
+                    import shlex
+                    args = event.get_command_args().strip()
+                    if args:
+                        exec_cmd = f"{exec_cmd} {shlex.quote(args)}"
+                try:
+                    timeout = max(1, int(qcmd.get("timeout", 30) or 30))
+                except (TypeError, ValueError):
+                    timeout = 30
+                if qtype == "exec":
+                    return True, await self._hm_run_exec_quick_command(
+                        command_name, exec_cmd, timeout=timeout), command
+
+                async def deliver_async_result() -> None:
+                    result = await self._hm_run_exec_quick_command(command_name, exec_cmd, timeout=timeout)
+                    adapter = self._adapter_for_source(source)  # type: ignore[attr-defined]
+                    if adapter is None:
+                        logger.warning("Async quick command /%s completed without a source adapter", command_name)
+                        return
+                    await adapter.send(
+                        source.chat_id, result,
+                        metadata=self._thread_metadata_for_source(source),  # type: ignore[attr-defined]
+                    )
+
+                task = asyncio.create_task(deliver_async_result())
+                background_tasks = getattr(self, "_background_tasks", None)
+                if background_tasks is None:
+                    background_tasks = self._background_tasks = set()
+                background_tasks.add(task)
+                task.add_done_callback(background_tasks.discard)
+                return True, qcmd.get("started_message") or f"Quick command `/{command_name}` started.", command
             if qtype != "alias":
                 return True, t("gateway.quick_command.unsupported_type", command=command), command
             new_command = self._hm_expand_alias_quick_command(event, qcmd)
