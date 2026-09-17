@@ -1,7 +1,7 @@
 """Tests for user-defined quick commands that bypass the agent loop."""
 import os
 import subprocess
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from rich.text import Text
 import pytest
 
@@ -174,6 +174,50 @@ class TestGatewayQuickCommands:
             result = await runner._handle_message(event)
         assert result is not None
         assert "timed out" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_exec_quick_command_passes_args_and_uses_configured_timeout(self):
+        from gateway.run import GatewayRunner
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = {"quick_commands": {
+            "args": {"type": "exec", "command": "printf '%s'", "pass_args": True, "timeout": 42}
+        }}
+        runner._running_agents = {}
+        runner._pending_messages = {}
+        runner._is_user_authorized = MagicMock(return_value=True)
+        event = self._make_event("args", "a value with spaces")
+
+        with patch.object(runner, "_hm_run_exec_quick_command", new_callable=AsyncMock) as run:
+            run.return_value = "ok"
+            result = await runner._handle_message(event)
+
+        assert result == "ok"
+        assert run.await_args.kwargs["timeout"] == 42
+        assert run.await_args.args[1].endswith("'a value with spaces'")
+
+    @pytest.mark.asyncio
+    async def test_exec_async_quick_command_acks_then_delivers_output(self):
+        from gateway.run import GatewayRunner
+        runner = GatewayRunner.__new__(GatewayRunner)
+        runner.config = {"quick_commands": {
+            "long": {"type": "exec_async", "command": "echo ok", "started_message": "Started."}
+        }}
+        runner._running_agents = {}
+        runner._pending_messages = {}
+        runner._is_user_authorized = MagicMock(return_value=True)
+        adapter = MagicMock()
+        adapter.send = AsyncMock()
+        runner._adapter_for_source = MagicMock(return_value=adapter)
+        runner._thread_metadata_for_source = MagicMock(return_value={"thread_id": "9"})
+        event = self._make_event("long")
+        event.source.chat_id = "123"
+
+        result = await runner._handle_message(event)
+        tasks = list(runner._background_tasks)
+        await __import__("asyncio").gather(*tasks)
+
+        assert result == "Started."
+        adapter.send.assert_awaited_once_with("123", "ok", metadata={"thread_id": "9"})
 
     @pytest.mark.asyncio
     async def test_gateway_config_object_supports_quick_commands(self):
