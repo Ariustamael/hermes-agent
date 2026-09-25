@@ -1032,7 +1032,15 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
                 exec_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
                 env=build_subprocess_env(),
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            communicate = asyncio.create_task(proc.communicate())
+            try:
+                stdout, stderr = await asyncio.wait_for(asyncio.shield(communicate), timeout=timeout)
+            except asyncio.TimeoutError:
+                if proc.returncode is None:
+                    proc.terminate()
+                with suppress(asyncio.CancelledError, Exception):
+                    await communicate
+                return t("gateway.quick_command.timed_out")
             output = (stdout or stderr).decode().strip()
             if output:
                 from agent.redact import redact_sensitive_text
@@ -1082,15 +1090,31 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
                         command_name, exec_cmd, timeout=timeout), command
 
                 async def deliver_async_result() -> None:
-                    result = await self._hm_run_exec_quick_command(command_name, exec_cmd, timeout=timeout)
-                    adapter = self._adapter_for_source(source)  # type: ignore[attr-defined]
-                    if adapter is None:
-                        logger.warning("Async quick command /%s completed without a source adapter", command_name)
-                        return
-                    await adapter.send(
-                        source.chat_id, result,
-                        metadata=self._thread_metadata_for_source(source),  # type: ignore[attr-defined]
-                    )
+                    logger.info("Async quick command /%s started (timeout=%ss)", command_name, timeout)
+                    try:
+                        result = await self._hm_run_exec_quick_command(command_name, exec_cmd, timeout=timeout)
+                        adapter = self._delivery_adapter_for(source)
+                        if adapter is None:
+                            logger.warning("Async quick command /%s completed without a delivery adapter", command_name)
+                            return
+                        await adapter.send(
+                            source.chat_id, result,
+                            metadata=self._thread_metadata_for_source(source),  # type: ignore[attr-defined]
+                        )
+                        logger.info("Async quick command /%s result delivered", command_name)
+                    except asyncio.CancelledError:
+                        logger.warning("Async quick command /%s was cancelled before delivery", command_name)
+                        raise
+                    except Exception:
+                        logger.exception("Async quick command /%s failed before delivery", command_name)
+                        adapter = self._delivery_adapter_for(source)
+                        if adapter is not None:
+                            with suppress(Exception):
+                                await adapter.send(
+                                    source.chat_id,
+                                    f"Quick command `/{command_name}` failed before its result could be delivered. Please try again.",
+                                    metadata=self._thread_metadata_for_source(source),  # type: ignore[attr-defined]
+                                )
 
                 task = asyncio.create_task(deliver_async_result())
                 background_tasks = getattr(self, "_background_tasks", None)
