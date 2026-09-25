@@ -80,19 +80,15 @@ def test_baked_banner_uses_live_identity(monkeypatch):
     from hermes_cli import banner, version_info
 
     monkeypatch.setattr(version_info, "get_code_identity", lambda: {"short_sha": "a1b2c3d4"})
-    assert banner._baked_banner_state() == {"upstream": "a1b2c3d4", "local": "a1b2c3d4", "ahead": 0}
+    assert banner._baked_banner_state() == {"upstream": "a1b2c3d4", "local": "a1b2c3d4", "ahead": 0, "behind": 0}
 
 
 def test_banner_can_hide_capability_catalogs(tmp_path, monkeypatch):
     """The compact startup preference hides tools, MCP status, and skills."""
-    import yaml
-
     home = tmp_path / ".hermes"
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
-    (home / "config.yaml").write_text(
-        yaml.safe_dump({"display": {"startup_banner": {"show_capabilities": False}}})
-    )
+    (home / "config.yaml").write_text('{"display": {"startup_banner": {"show_capabilities": false}}}')
 
     with (
         patch.object(model_tools, "check_tool_availability", return_value=(["file"], [])),
@@ -122,3 +118,27 @@ def test_banner_can_hide_capability_catalogs(tmp_path, monkeypatch):
     assert "documents" not in output
     assert "ascii-art" not in output
     assert "/help for commands" in output
+
+
+def test_banner_reports_carried_and_pending_upstream_commits(monkeypatch):
+    monkeypatch.setattr(banner, "get_git_banner_state", lambda: {
+        "upstream": "upstream", "local": "local", "ahead": 28, "behind": 3386,
+    })
+    monkeypatch.setattr("hermes_cli.update_channel.resolve_update_channel", lambda *_: "main")
+    assert "+28 carried commits; 3386 upstream commits pending" in banner.format_banner_version_label()
+
+
+def test_git_banner_state_counts_pending_upstream_commits(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        banner.source_check,
+        "_git_stdout",
+        lambda args, **_: {"origin/main": "upstream", "HEAD": "local"}[args[-1]],
+    )
+    monkeypatch.setattr(
+        banner.source_check,
+        "_git_count",
+        lambda args, **_: 28 if args[-1] == "origin/main..HEAD" else 3386,
+    )
+    assert banner._compute_git_banner_state(tmp_path) == {
+        "upstream": "upstream", "local": "local", "ahead": 28, "behind": 3386,
+    }

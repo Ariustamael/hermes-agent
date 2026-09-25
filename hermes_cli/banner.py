@@ -172,7 +172,7 @@ def _baked_banner_state() -> Optional[dict]:
         from hermes_cli.version_info import get_code_identity
         return get_code_identity().get("short_sha")
     baked = _quiet(_baked)
-    return {"upstream": baked, "local": baked, "ahead": 0} if baked else None
+    return {"upstream": baked, "local": baked, "ahead": 0, "behind": 0} if baked else None
 
 
 def _compute_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]:
@@ -184,7 +184,8 @@ def _compute_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]
         # Live-git lookup failed (e.g. shallow clone without origin/main).
         return _baked_banner_state()
     ahead = source_check._git_count(["rev-list", "--count", "origin/main..HEAD"], cwd=repo_dir) or 0
-    return {"upstream": upstream, "local": local, "ahead": max(ahead, 0)}
+    behind = source_check._git_count(["rev-list", "--count", "HEAD..origin/main"], cwd=repo_dir) or 0
+    return {"upstream": upstream, "local": local, "ahead": max(ahead, 0), "behind": max(behind, 0)}
 
 
 _RELEASE_URL_BASE = "https://github.com/NousResearch/hermes-agent/releases/tag"
@@ -236,9 +237,15 @@ def format_banner_version_label() -> str:
         return base
     upstream, local = state["upstream"], state["local"]
     ahead = int(state.get("ahead") or 0)
-    if ahead <= 0 or upstream == local:
+    behind = int(state.get("behind") or 0)
+    if upstream == local or (ahead <= 0 and behind <= 0):
         return f"{base} · upstream {upstream}"
-    return f"{base} · upstream {upstream} · local {local} (+{ahead} carried {_plural(ahead, 'commit')})"
+    details = []
+    if ahead > 0:
+        details.append(f"+{ahead} carried {_plural(ahead, 'commit')}")
+    if behind > 0:
+        details.append(f"{behind} upstream {_plural(behind, 'commit')} pending")
+    return f"{base} · upstream {upstream} · local {local} ({'; '.join(details)})"
 
 
 # === Non-blocking update check ===

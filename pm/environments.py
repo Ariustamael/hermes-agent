@@ -177,7 +177,15 @@ def _payload_path(root: Path, relative: str, what: str) -> Path:
 
 
 def payload_venv(project_root: Path) -> Path | None:
-    """The environment a sealed payload ships beside its tree, or ``None``."""
+    """The environment a sealed payload ships beside its tree, or ``None``.
+
+    Test isolation deliberately runs a source checkout under a temporary
+    ``HERMES_HOME``.  It must not inspect the real install's sibling manifest
+    while bootstrap imports execute, since that both leaks production state and
+    defeats the suite's home-I/O guard.
+    """
+    if os.environ.get("HERMES_TEST_ISOLATION"):
+        return None
     root = Path(project_root).resolve()
     venv = (_payload_manifest(root) or {}).get("venv")
     return _payload_path(root, venv, "environment") if venv else None
@@ -222,7 +230,9 @@ def store_root(project_root: Path, *, honor_runtime_override: bool = True) -> Pa
         if override:
             return Path(override).resolve()
     root = Path(project_root).resolve()
-    store = (_payload_manifest(root) or {}).get("store")
+    store = None if os.environ.get("HERMES_TEST_ISOLATION") else (
+        (_payload_manifest(root) or {}).get("store")
+    )
     if store:
         return _payload_path(root, store, "store")
     from pm.paths import install_stamp_path
