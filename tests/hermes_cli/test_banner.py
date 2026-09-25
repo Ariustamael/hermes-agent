@@ -99,7 +99,7 @@ def test_banner_can_hide_capability_catalogs(tmp_path, monkeypatch):
         patch.object(banner, "get_available_skills", return_value={"creative": ["ascii-art"]}),
         patch.object(banner, "get_update_result", return_value=None),
         patch.object(
-            tools.mcp_tool,
+            tools.mcp_tool_discovery,
             "get_mcp_status",
             return_value=[{"name": "documents", "transport": "stdio", "tools": 10, "connected": True}],
         ),
