@@ -148,7 +148,15 @@ def record_activation_inputs(stamps: Path, mtimes: dict[str, int], project_root:
 
 
 def payload_venv(project_root: Path) -> Path | None:
-    """The environment a sealed payload ships beside its tree, or ``None``."""
+    """The environment a sealed payload ships beside its tree, or ``None``.
+
+    Test isolation deliberately runs a source checkout under a temporary
+    ``HERMES_HOME``.  It must not inspect the real install's sibling manifest
+    while bootstrap imports execute, since that both leaks production state and
+    defeats the suite's home-I/O guard.
+    """
+    if os.environ.get("HERMES_TEST_ISOLATION"):
+        return None
     root = Path(project_root).resolve()
     manifest_path = root.parent / "manifest.json"
     if manifest_path.is_file():
@@ -180,7 +188,7 @@ def store_root(project_root: Path, *, honor_runtime_override: bool = True) -> Pa
             return Path(override).resolve()
     root = Path(project_root).resolve()
     manifest_path = root.parent / "manifest.json"
-    if manifest_path.is_file():
+    if not os.environ.get("HERMES_TEST_ISOLATION") and manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
         if (root.parent / manifest.get("repo", "")).resolve() == root:
             store = (root.parent / manifest["store"]).resolve()
