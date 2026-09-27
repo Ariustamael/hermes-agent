@@ -582,7 +582,8 @@ class TestVoiceChannelCommands:
             "second": {},
         }
 
-        await runner._handle_voice_channel_input(111, 222, "Hello from VC", adapter=mock_adapter)
+        # Local privacy gate requires the configured wake word before dispatch.
+        await runner._handle_voice_channel_input(111, 222, "Hermes, hello from VC", adapter=mock_adapter)
 
         source = mock_adapter.handle_message.call_args[0][0].source
         assert (source.user_id, source.profile) == ("222", "second")
