@@ -2412,9 +2412,9 @@ def _session_info(agent, session: dict | None = None) -> dict:
     }
     with contextlib.suppress(Exception):
         from hermes_cli import __release_date__
-        from hermes_cli.version_info import get_version_info
+        from hermes_cli.banner import format_banner_version_label
 
-        info.update(version=get_version_info().base_version, release_date=__release_date__)
+        info.update(version=format_banner_version_label(), release_date=__release_date__)
     live_agent = agent is not None and not sess.get("_compute_host_active")
     if live_agent:
         with contextlib.suppress(Exception):

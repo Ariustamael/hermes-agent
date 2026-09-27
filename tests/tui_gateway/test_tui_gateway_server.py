@@ -13012,6 +13012,22 @@ def test_session_redirect_rejects_when_idle_without_agent(monkeypatch):
     assert session.get("queued_prompt") is None
 
 
+
+
+def test_session_info_uses_the_full_cli_banner_version_label(monkeypatch):
+    from hermes_cli import banner
+
+    label = "Hermes Agent v0.21.5 · upstream 6f7a7991 · local d7c20454 (+32 carried commits; 56 upstream commits pending)"
+    monkeypatch.setattr(banner, "format_banner_version_label", lambda: label)
+
+    info = server._session_info(
+        types.SimpleNamespace(tools=[], model="test/model", provider="openai-codex"),
+        {"history": []},
+    )
+
+    assert info["version"] == label
+
+
 def test_session_info_includes_session_title(monkeypatch):
     class _FakeDB:
         def get_session_title(self, key):

@@ -74,6 +74,18 @@ async function renderFooter(info: SessionInfo): Promise<string> {
 }
 
 describe('branding MCP headline count', () => {
+  it('renders the backend-provided full version label without duplicating the product name', async () => {
+    const frame = await renderFooter({
+      ...baseInfo([]),
+      version: 'Hermes Agent v0.21.5 · upstream 6f7a7991 · local d7c20454 (+32 carried commits; 56 upstream commits pending)'
+    })
+
+    expect(frame).toContain('56')
+    expect(frame).toContain('upstream commits')
+    expect(frame).toContain('pending)')
+    expect(frame).not.toContain('vHermes Agent')
+  })
+
   it('counts only connected servers, not configured-but-disabled ones', async () => {
     const frame = await renderFooter(
       baseInfo([

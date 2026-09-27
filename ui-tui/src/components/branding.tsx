@@ -392,15 +392,17 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
       {wide ? (
         <Box justifyContent="center" marginBottom={1}>
           <Text bold color={t.color.primary}>
-            {t.brand.name}
-            {info.version ? ` v${info.version}` : ''}
-            {info.release_date ? ` (${info.release_date})` : ''}
+            {info.version || t.brand.name}
+            {!info.version && info.release_date ? ` (${info.release_date})` : ''}
           </Text>
         </Box>
       ) : (
         // Narrow layout hides the hero column; surface model/cwd/session
         // here so they aren't lost.
         <Box flexDirection="column" marginBottom={1}>
+          <Text bold color={t.color.primary} wrap="truncate-end">
+            {info.version || t.brand.name}
+          </Text>
           <Text color={t.color.accent} wrap="truncate-end">
             {(info.model ?? '').split('/').pop()}
             <Text color={t.color.muted}> · Nous Research</Text>
