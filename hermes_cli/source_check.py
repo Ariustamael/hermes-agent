@@ -347,6 +347,13 @@ def _behind_count(co: _Checkout, target: str) -> tuple[int, list[dict]]:
     if co.head == target or (not co.embedded and _git_ok(
             ["merge-base", "--is-ancestor", target, co.head], cwd=co.root, git=co.git)):
         return 0, []
+    # A previous explicit update check/fetch may already have the advertised target locally. Count
+    # it before calling GitHub: this gives the TUI the exact distance without another fetch and
+    # still degrades cleanly for a passive check whose remote object is not present.
+    if not co.embedded:
+        local_count = _git_count(["rev-list", "--count", f"{co.head}..{target}"], cwd=co.root)
+        if local_count is not None:
+            return local_count, []
     if co.repository:
         payload = _github_compare(co.head, target, co.repository)
         ahead = (payload or {}).get("ahead_by")
