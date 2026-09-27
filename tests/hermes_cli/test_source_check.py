@@ -487,6 +487,23 @@ def test_malformed_optional_changelog_and_cache_do_not_hide_the_update(installat
                         f"/repos/fixture/fork/compare/{head}...{'a' * 40}"] * 2
 
 
+def test_uses_locally_fetched_target_to_report_exact_behind_count(installation):
+    from hermes_cli.source_check import check_for_updates
+
+    root, linked, home, base, head, responses, requests, git = installation
+    git("commit", "--allow-empty", "-m", "upstream one")
+    git("commit", "--allow-empty", "-m", "upstream two")
+    target = git("rev-parse", "HEAD")
+    git("reset", "--hard", head)
+    responses["/repos/fixture/fork/commits/main"] = (200, target)
+
+    status = check_for_updates(install_root=root, home=home)
+
+    assert status["behind"] == 2
+    assert status["commits"] == []
+    assert requests == [MAIN_CHANNEL, "/repos/fixture/fork/commits/main"]
+
+
 @pytest.mark.parametrize("repository,heals", [("NousResearch/hermes-agent", True), ("fixture/fork", False)])
 def test_official_ssh_healing_uses_public_https_without_retargeting_forks(installation, monkeypatch, repository, heals):
     from hermes_cli.source_check import check_for_updates
