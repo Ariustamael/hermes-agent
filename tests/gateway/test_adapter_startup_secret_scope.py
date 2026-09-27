@@ -28,6 +28,7 @@ from agent import secret_scope as ss
 
 # (module path, representative credential env var owned by that adapter)
 MIGRATED_ADAPTER_MODULES = [
+    ("plugins.platforms.telegram.adapter", "TELEGRAM_BOT_TOKEN"),
     ("plugins.platforms.irc.adapter", "IRC_SERVER_PASSWORD"),
     ("plugins.platforms.line.adapter", "LINE_CHANNEL_ACCESS_TOKEN"),
     ("plugins.platforms.teams.adapter", "TEAMS_CLIENT_SECRET"),
@@ -119,3 +120,17 @@ def test_single_profile_legacy_environ_read(module_name, var, monkeypatch):
     assert helper(var) == "legacy-env-value"
     monkeypatch.delenv(var, raising=False)
     assert helper(var, "d") == "d"
+
+
+def test_telegram_enablement_reads_the_served_profile_token(monkeypatch):
+    """Telegram's plugin gate must use the same scoped credential path as startup."""
+    from gateway.config import PlatformConfig
+    from plugins.platforms.telegram.adapter import _is_connected
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "default-profile-token")
+    ss.set_multiplex_active(True)
+    token = ss.set_secret_scope({"TELEGRAM_BOT_TOKEN": "served-profile-token"})
+    try:
+        assert _is_connected(PlatformConfig()) is True
+    finally:
+        ss.reset_secret_scope(token)

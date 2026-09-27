@@ -7662,8 +7662,10 @@ def _is_connected(config) -> bool:
     not enough or the plugin-enable pass would enable Telegram on any machine with it installed."""
     token = getattr(config, "token", None)
     if not token:
-        import hermes_cli.gateway as gateway_mod
-        token = gateway_mod.get_env_value("TELEGRAM_BOT_TOKEN") or ""
+        # The enablement pass runs once per served profile. Use the profile-secret
+        # scope, not the legacy CLI environment reader, or Telegram is silently
+        # skipped when its token is supplied by a profile's external secret store.
+        token = _get_scoped_secret("TELEGRAM_BOT_TOKEN", "", external_fallback=True)
     return bool(str(token).strip())
 
 
