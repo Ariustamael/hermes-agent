@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Preserve a recovery point before rewriting the active customization history.
+set -euo pipefail
+branch=$(git symbolic-ref --quiet --short HEAD || true)
+case "$branch" in
+  dryrun/local-customizations-*) exit 0 ;;
+  chester/local-customizations) ;;
+  *)
+    cat >&2 <<EOF
+Refusing to rebase '${branch:-detached HEAD}'.
+Rebase only chester/local-customizations (or an isolated dryrun/local-customizations-* branch).
+EOF
+    exit 1
+    ;;
+esac
+if [ -n "$(git status --porcelain=v1)" ]; then
+  echo 'Refusing rebase: commit or otherwise resolve local source changes first.' >&2
+  exit 1
+fi
+stamp=$(date +%Y%m%d-%H%M%S)
+git branch "safety/chester-local-customizations-pre-rebase-$stamp" HEAD
+git tag "chester-local-customizations-pre-rebase-$stamp" HEAD
+echo "Created safety branch/tag for this rebase: $stamp" >&2
