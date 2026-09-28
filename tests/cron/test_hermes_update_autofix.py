@@ -47,6 +47,9 @@ def test_queue_hermes_update_autofix_creates_one_authorized_origin_job(monkeypat
     }
     assert created["skills"] == ["hermes-agent"]
     assert "never discard, reset, or auto-stash" in created["prompt"]
+    assert "git fetch --no-tags origin main:refs/remotes/origin/main" in created["prompt"]
+    assert "HTTP 429, stop immediately without retrying" in created["prompt"]
+    assert "never use a bare `git fetch`, `--tags`, or a full `git bundle --all`" in created["prompt"]
     assert triggered == ["repair123"]
 
 
