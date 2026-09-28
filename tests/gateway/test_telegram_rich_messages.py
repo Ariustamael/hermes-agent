@@ -84,6 +84,17 @@ def _rich_api_kwargs(adapter):
     return call.kwargs["api_kwargs"]
 
 
+def test_force_legacy_markdown_skips_rich_send_and_formats_tables():
+    """Cron deliveries can request predictable standard-client formatting."""
+    adapter = _make_adapter()
+
+    assert adapter._should_attempt_rich(RICH_CONTENT, {"force_legacy_markdown": True}) is False
+    formatted = adapter.format_message(RICH_CONTENT)
+    assert "*Results*" in formatted
+    assert "*rich*" in formatted
+    assert "Status: ✅" in formatted
+
+
 @pytest.mark.asyncio
 async def test_details_without_math_still_uses_rich_send():
     adapter = _make_adapter()
