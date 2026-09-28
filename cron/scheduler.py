@@ -3645,10 +3645,25 @@ def _launch_external_cron_worker(job: dict) -> bool:
     ack_path = handoff_dir / f"{execution_id}.ready"
     # Captured so a worker that dies before its acknowledgement can name the cause (#112729).
     stderr_path = handoff_dir / f"{execution_id}.stderr"
+    # ``python -m cron.scheduler`` imports ``cron.__init__`` before scheduler.py gets a
+    # chance to import ``hermes_bootstrap``.  The managed launcher interpreter does not
+    # carry the application dependency generation, so that eager package import can fail
+    # on ruamel.yaml before the worker can acknowledge ownership.  Bootstrap first, then
+    # execute the module with its original worker arguments.
+    worker_entrypoint = (
+        "import runpy, sys; "
+        "root = sys.argv.pop(1); "
+        "sys.path.insert(0, root); "
+        "import hermes_bootstrap; "
+        "sys.argv[0] = 'cron.scheduler'; "
+        "runpy.run_module('cron.scheduler', run_name='__main__', alter_sys=True)"
+    )
+    repo_root = Path(__file__).resolve().parent.parent
     command = [
         sys.executable,
-        "-m",
-        "cron.scheduler",
+        "-c",
+        worker_entrypoint,
+        str(repo_root),
         "--external-worker-file",
         str(payload_path),
         "--ack-file",
@@ -3737,7 +3752,6 @@ def _launch_external_cron_worker(job: dict) -> bool:
     # dependency generation (#122222), and mark it so its own entry runs the PM dependency
     # boot. See cron/scheduler_worker_env.py and cron/worker_bootstrap.py.
     from cron.scheduler_worker_env import pin_hermes_tree_on_pythonpath
-    repo_root = Path(__file__).resolve().parent.parent
     worker_env = pin_hermes_tree_on_pythonpath(worker_env, repo_root)
     worker_env[WORKER_MARKER] = "1"
     try:

@@ -1367,7 +1367,12 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
             and self._rich_content_ok(content))
 
     def _should_attempt_rich(self, content: str, metadata: Optional[dict[str, Any]] = None) -> bool:
-        return bool(not (metadata or {}).get("expect_edits") and self._rich_eligible(content))
+        """Select native rich delivery unless the caller needs MarkdownV2 compatibility rendering."""
+        return bool(
+            not (metadata or {}).get("expect_edits")
+            and not (metadata or {}).get("force_legacy_markdown")
+            and self._rich_eligible(content)
+        )
 
     def prefers_fresh_final_streaming(self, content: str, metadata: Optional[dict[str, Any]] = None) -> bool:
         """Replace a streamed preview with a fresh rich final — DM topics only. Root DMs stay off (a live

@@ -1557,6 +1557,11 @@ def _live_send_text(
     # Send through the already-authorized transport: re-resolving from the plain target_adapters
     # dict cannot re-derive the SharedRouteAdapters satellite grant (the satellite owned
     # platforms.<p> block is disabled), yields None, and drops the delivery (#115656).
+    # Telegram's native-rich transport currently preserves GFM source rather than rendering
+    # headings and pipe tables in standard clients. Cron briefs favour readable MarkdownV2
+    # compatibility output, whose formatter turns those constructs into bold headings/row groups.
+    if t.platform_name == "telegram":
+        route_metadata = {**route_metadata, "force_legacy_markdown": True}
     # cancel() cannot tell "never started" from "in flight": a run_coroutine_threadsafe future stays
     # PENDING until the coroutine finishes, so cancel() returns True mid-send AND kills it. The send
     # records its own start under a lock; a timeout abandons it only if it never began.
