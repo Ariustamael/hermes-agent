@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Keep Chester-owned Hermes source changes on the dedicated customization branch.
+set -euo pipefail
+branch=$(git symbolic-ref --quiet --short HEAD || true)
+case "$branch" in
+  chester/local-customizations|dryrun/local-customizations-*)
+    exit 0
+    ;;
+esac
+cat >&2 <<EOF
+Refusing to commit Hermes source changes on '${branch:-detached HEAD}'.
+Use chester/local-customizations so local changes are preserved through updates.
+Set HERMES_ALLOW_NONLOCAL_COMMIT=1 only for an intentional upstream-maintenance exception.
+EOF
+[ "${HERMES_ALLOW_NONLOCAL_COMMIT:-}" = "1" ]
