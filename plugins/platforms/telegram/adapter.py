@@ -4927,7 +4927,11 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
         normalized_content = content.casefold() if content else ""
         if not normalized_content or not any(
             marker.casefold() in normalized_content
-            for marker in ("Reply with A/B/C/D/E", "Reply A–E")
+            for marker in (
+                "Reply with A/B/C/D/E",
+                "Reply A–E",
+                "Tap an answer below, or reply A–E",
+            )
         ):
             return None
         try:
