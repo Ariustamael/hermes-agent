@@ -186,7 +186,11 @@ export default class App extends PureComponent<Props, State> {
   // Remote PTYs can split a terminal-query reply between its ESC byte and
   // the following CSI bytes. Give a bare ESC a single longer grace period
   // while a query is in flight before treating it as a user Escape.
-  readonly QUERY_RESPONSE_ESC_GRACE_TIMEOUT = 250
+  // A remote SSH/Tailscale PTY can delay the continuation behind a busy
+  // render or network scheduling window. Keep this bounded, but longer than
+  // the normal interactive jitter so a valid response cannot be split into
+  // composer text.
+  readonly QUERY_RESPONSE_ESC_GRACE_TIMEOUT = 1000
   bareEscapeQueryGraceUsed = false
 
   // Terminal query/response dispatch. Responses arrive on stdin (parsed
