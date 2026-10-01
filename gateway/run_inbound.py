@@ -1040,7 +1040,7 @@ class GatewayInboundMixin(GatewayPluginInjectionMixin):
                     proc.terminate()
                 with suppress(asyncio.CancelledError, Exception):
                     await communicate
-                return t("gateway.quick_command.timed_out")
+                return f"Quick command timed out ({timeout}s)."
             output = (stdout or stderr).decode().strip()
             if output:
                 from agent.redact import redact_sensitive_text
