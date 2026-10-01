@@ -157,6 +157,20 @@ def _validate_single_op(store, action, target, content, old_text) -> Optional[st
 _BG_DELETE_ACTIONS = ("replace", "remove")
 
 
+def _unattended_review_edits_allowed() -> bool:
+    """Whether this profile explicitly permits background-review rewrites/deletes.
+
+    The default remains fail-closed. Resolve through the normal config loader at
+    call time so a multiplexed gateway reads the served profile, not its launch
+    profile.
+    """
+    try:
+        from hermes_cli.config import load_config
+        return bool((load_config() or {}).get("memory", {}).get("allow_unattended_review_edits", False))
+    except Exception:
+        return False
+
+
 def destructive_ops(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The replace/remove ops of a staged memory payload, single-op or batch shape."""
     ops = (payload.get("operations") or []) if payload.get("action") == "batch" else [payload]
@@ -173,7 +187,7 @@ def _background_delete_gate(store, action, operations, target="memory", content=
     staging failure fails closed to a plain denial."""
     from tools.skill_provenance import is_unattended_review
 
-    if not is_unattended_review():
+    if not is_unattended_review() or _unattended_review_edits_allowed():
         return None
     payload = ({"action": "batch", "target": target, "operations": operations}
                if operations is not None else
