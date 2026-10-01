@@ -289,7 +289,7 @@ def prefetch_update_check():
 
     def _run():
         global _update_result
-        _update_result = source_check.check_for_updates(passive=True).get("behind")
+        _update_result = _display_update_behind(source_check.check_for_updates(passive=True).get("behind"))
         _update_check_done.set()
     _daemon(None, _run)
 
@@ -323,6 +323,21 @@ def get_update_result(timeout: float = 0.5) -> Optional[int]:
     """Get result of prefetched check. Returns None if not ready."""
     _update_check_done.wait(timeout=timeout)
     return _update_result
+
+
+def _display_update_behind(behind: Optional[int]) -> Optional[int]:
+    """Keep an exact local divergence count when the source check only knows an update exists.
+
+    A carried local branch can diverge from the configured update target, making the
+    remote compare return ``UPDATE_AVAILABLE_NO_COUNT`` (-1).  For a git checkout
+    we already know the locally fetched ``origin/main`` distance, which is the
+    useful update signal shown by the CLI and TUI.
+    """
+    if behind != source_check.UPDATE_AVAILABLE_NO_COUNT:
+        return behind
+    state = get_git_banner_state()
+    local_behind = state.get("behind") if state else None
+    return local_behind if isinstance(local_behind, int) and local_behind > 0 else behind
 
 
 def _format_update_notice(behind: int) -> str:

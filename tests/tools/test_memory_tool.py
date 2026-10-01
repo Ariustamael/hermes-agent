@@ -995,6 +995,21 @@ class TestBackgroundReviewDeleteGate:
         assert result["success"] is True
         assert "a fact worth keeping" in store._entries_for("memory")
 
+    def test_explicit_config_allows_unattended_review_replace(self, store, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+        (tmp_path / "config.yaml").write_text(
+            "memory:\n  allow_unattended_review_edits: true\n", encoding="utf-8")
+        store.add("memory", "entry the fork may rewrite after explicit opt-in")
+        token = set_current_write_origin("background_review")
+        try:
+            result = json.loads(memory_tool(
+                action="replace", old_text="may rewrite", content="rewritten by opted-in fork", store=store))
+        finally:
+            reset_current_write_origin(token)
+        assert result["success"] is True
+        assert not result.get("staged", False)
+        assert store._entries_for("memory") == ["rewritten by opted-in fork"]
+
     def test_foreground_remove_unaffected(self, store):
         store.add("memory", "entry a supervised turn may remove")
         result = json.loads(memory_tool(action="remove", old_text="supervised turn", store=store))

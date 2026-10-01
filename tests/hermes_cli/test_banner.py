@@ -142,3 +142,10 @@ def test_git_banner_state_counts_pending_upstream_commits(tmp_path, monkeypatch)
     assert banner._compute_git_banner_state(tmp_path) == {
         "upstream": "upstream", "local": "local", "ahead": 28, "behind": 3386,
     }
+
+
+def test_update_notice_uses_exact_local_divergence_when_remote_has_no_count(monkeypatch):
+    monkeypatch.setattr(banner, "get_git_banner_state", lambda: {"behind": 842})
+
+    assert banner._display_update_behind(banner.source_check.UPDATE_AVAILABLE_NO_COUNT) == 842
+    assert banner._display_update_behind(7) == 7

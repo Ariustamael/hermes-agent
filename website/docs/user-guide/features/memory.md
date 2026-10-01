@@ -355,6 +355,17 @@ ones — waits for your yes/no before it ever enters your profile.
 
 A staged `patch` or `remove` (the background review stages these even with the
 gate off) records the full entry it targets, and `/memory pending` shows it.
+To explicitly permit those edits without review, opt in per profile:
+
+```yaml
+memory:
+  allow_unattended_review_edits: true
+```
+
+This enables background-review `replace` and `remove` operations as well as adds.
+The default is `false`; it remains the safer setting when the review should only
+propose consolidation or deletion.
+
 Approval applies to exactly that entry: if it changed after the write was staged,
 the write is refused and stays pending for you to reject. A `replace`/`patch`/`remove`
 staged before this pinning existed has no verifiable target and is refused too:
