@@ -139,6 +139,9 @@ describe('App split terminal-query response recovery', () => {
     expect(dispatchKeyboardEvent).not.toHaveBeenCalled()
     expect(app.keyParseState.incomplete).toBe('\x1b')
 
+    // The remote continuation can arrive well after the old 250 ms grace
+    // window, for example after a busy renderer/event-loop turn.
+    await vi.advanceTimersByTimeAsync(500)
     app.processInput('[?4;6;7;14;21;22;23;24;28;32;42;52c')
     await expect(pending).resolves.toMatchObject({ type: 'da1' })
 
