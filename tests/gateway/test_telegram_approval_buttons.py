@@ -246,6 +246,7 @@ class TestTelegramQuizButtons:
         "reply_instruction",
         [
             "Tap an answer below, or reply A–E. The answer remains hidden until marked.",
+            "Tap an answer below, or reply A-E. The answer remains hidden until marked.",
             "Reply with A/B/C/D/E, or use the Telegram buttons.",
         ],
     )
