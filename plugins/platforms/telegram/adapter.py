@@ -5035,6 +5035,7 @@ class TelegramAdapter(BasePlatformAdapter):
                 "Reply with A/B/C/D/E",
                 "Reply A–E",
                 "Tap an answer below, or reply A–E",
+                "Tap an answer below, or reply A-E",
             )
         ):
             return None
