@@ -514,6 +514,11 @@ def _settle_interrupted_update() -> None:
     call for entries that never reach this module). A killed ZIP swap can leave ``hermes_cli/`` itself
     moved aside: the journal-driven restore then runs from that moved-aside copy, the code that wrote
     the journal. Root files are never absent mid-swap (``update_cmd_zip._commit_staged_replacements``)."""
+    # Test suites use linked worktrees below the real Hermes home. Recovery's
+    # marker probe follows Git's common directory, which the home-I/O guard
+    # intentionally rejects; tests never own a live update transaction.
+    if os.environ.get("HERMES_TEST_ISOLATION"):
+        return
     try:
         from hermes_cli import _early_recovery as recovery
     except ImportError:

@@ -235,6 +235,8 @@ def store_root(project_root: Path, *, honor_runtime_override: bool = True) -> Pa
     )
     if store:
         return _payload_path(root, store, "store")
+    if os.environ.get("HERMES_TEST_ISOLATION") and not os.environ.get("HERMES_INSTALL_ROOT"):
+        return get_default_hermes_root() / "tools"
     from pm.paths import install_stamp_path
 
     for directory in (root, *root.parents):
