@@ -30059,6 +30059,23 @@
             "title": "Update Command",
             "type": "string"
           },
+          "update_local_only": {
+            "default": false,
+            "title": "Update Local Only",
+            "type": "boolean"
+          },
+          "update_ahead": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Update Ahead"
+          },
           "usage": {
             "anyOf": [
               {
@@ -30925,6 +30942,23 @@
             "default": "",
             "title": "Update Command",
             "type": "string"
+          },
+          "update_local_only": {
+            "default": false,
+            "title": "Update Local Only",
+            "type": "boolean"
+          },
+          "update_ahead": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Update Ahead"
           },
           "usage": {
             "anyOf": [

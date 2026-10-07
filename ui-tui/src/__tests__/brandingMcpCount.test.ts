@@ -86,6 +86,21 @@ describe('branding MCP headline count', () => {
     expect(frame).not.toContain('vHermes Agent')
   })
 
+  it('shows rebase guidance instead of the ordinary updater for a local customization branch', async () => {
+    const frame = await renderFooter({
+      ...baseInfo([]),
+      update_ahead: 7,
+      update_behind: 12,
+      update_command: 'hermes update',
+      update_local_only: true
+    })
+
+    expect(frame).toContain('12 commits behind origin/main')
+    expect(frame).toContain('+7 local commits')
+    expect(frame).toContain('rebase required')
+    expect(frame).not.toContain('run hermes update')
+  })
+
   it('counts only connected servers, not configured-but-disabled ones', async () => {
     const frame = await renderFooter(
       baseInfo([

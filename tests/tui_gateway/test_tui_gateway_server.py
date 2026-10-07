@@ -13170,6 +13170,32 @@ def test_session_info_uses_the_full_cli_banner_version_label(monkeypatch):
     assert info["version"] == label
 
 
+def test_session_info_reports_local_branch_drift_without_update_command(monkeypatch):
+    from hermes_cli import banner, config
+
+    monkeypatch.setattr(banner, "get_update_result", lambda timeout: None)
+    monkeypatch.setattr(
+        banner,
+        "get_git_banner_state",
+        lambda: {"upstream": "abc12345", "local": "def67890", "ahead": 7, "behind": 12},
+    )
+    monkeypatch.setattr(
+        config,
+        "recommended_update_command",
+        lambda: pytest.fail("local customization drift must not offer self-update"),
+    )
+
+    info = server._session_info(
+        types.SimpleNamespace(tools=[], model="test/model", provider="openai-codex"),
+        {"history": []},
+    )
+
+    assert info["update_behind"] == 12
+    assert info["update_ahead"] == 7
+    assert info["update_local_only"] is True
+    assert info["update_command"] == ""
+
+
 def test_session_info_includes_session_title(monkeypatch):
     class _FakeDB:
         def get_session_title(self, key):

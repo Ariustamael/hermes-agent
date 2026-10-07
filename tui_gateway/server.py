@@ -2392,6 +2392,7 @@ def _session_info(agent, session: dict | None = None) -> dict:
         "title": _session_live_title(sess, session_key) if session_key else "",
         "stored_session_id": session_key or "", "desktop_contract": DESKTOP_BACKEND_CONTRACT,
         "version": "", "release_date": "", "update_behind": None, "update_command": "",
+        "update_local_only": False, "update_ahead": None,
         "usage": _session_usage_snapshot(session),
         "profile_name": profile_name_for_home(sess.get("profile_home")) or _current_profile_name(),
     }
@@ -2419,12 +2420,24 @@ def _session_info(agent, session: dict | None = None) -> dict:
         info["system_prompt"] = (
             mirror.get("system_prompt") if "system_prompt" in mirror else getattr(agent, "_cached_system_prompt", "") or "")
     with contextlib.suppress(Exception):
-        from hermes_cli.banner import get_update_result
+        from hermes_cli.banner import get_git_banner_state, get_update_result
         from hermes_cli.config import recommended_update_command
         # Two assignments (not one info.update): if recommended_update_command() raises,
         # update_behind must still be reported, as on main.
-        info["update_behind"] = get_update_result(timeout=0.5)
-        info["update_command"] = recommended_update_command()
+        behind = get_update_result(timeout=0.5)
+        if behind is None:
+            state = get_git_banner_state()
+            local_behind = state.get("behind") if isinstance(state, dict) else None
+            if isinstance(local_behind, int) and local_behind > 0:
+                info["update_behind"] = local_behind
+                info["update_local_only"] = True
+                local_ahead = state.get("ahead") if isinstance(state, dict) else None
+                info["update_ahead"] = local_ahead if isinstance(local_ahead, int) else None
+            else:
+                info["update_behind"] = None
+        else:
+            info["update_behind"] = behind
+            info["update_command"] = recommended_update_command()
     if live_agent and (warn := _probe_credentials(agent)):
         info["credential_warning"] = warn
     return info

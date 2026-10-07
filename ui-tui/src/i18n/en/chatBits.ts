@@ -40,6 +40,8 @@ export const chatBitsEn = {
       helpHint: '/help for commands',
       commitsBehindOne: (count: number) => `! ${count} commit behind`,
       commitsBehindOther: (count: number) => `! ${count} commits behind`,
+      localBranchBehind: (behind: number, ahead: number | null) =>
+        `! ${behind} commits behind origin/main${ahead ? `; +${ahead} local commits` : ''} — rebase required`,
       runPrefix: ' - run ',
       toUpdate: ' to update'
     },
