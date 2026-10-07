@@ -90,6 +90,10 @@ class SessionLiveInfo(OpenModel):
     release_date: str = ""
     update_behind: JsonValue | None = None
     update_command: str = ""
+    # A local customization branch is compared with origin/main for visibility,
+    # but it must not be offered the ordinary self-update action.
+    update_local_only: bool = False
+    update_ahead: int | None = None
     usage: Usage | None = None
     profile_name: str | None = None
     mcp_servers: list[McpServerStatus] = Field(default_factory=list)

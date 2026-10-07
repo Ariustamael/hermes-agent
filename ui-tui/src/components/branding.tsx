@@ -290,6 +290,9 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
   // hermes_cli/banner.py) and the "connected" label on the collapse toggle.
   const mcpServers = info.mcp_servers ?? []
   const mcpConnected = mcpServers.filter(s => s.connected).length
+  const updateBehind = typeof info.update_behind === 'number' ? info.update_behind : null
+  const localBranchUpdate = updateBehind !== null && updateBehind > 0 && info.update_local_only
+  const updateAhead = typeof info.update_ahead === 'number' ? info.update_ahead : null
 
   const toolsBody = () => {
     if (info.lazy && toolEntries.length === 0) {
@@ -489,7 +492,13 @@ export function SessionPanel({ info, maxWidth, sid, t }: SessionPanelProps) {
         <Text color={t.color.muted}>{T.helpHint}</Text>
       </Text>
 
-      {typeof info.update_behind === 'number' && info.update_behind > 0 && (
+      {localBranchUpdate && (
+        <Text bold color={t.color.warn}>
+          {T.localBranchBehind(updateBehind ?? 0, updateAhead)}
+        </Text>
+      )}
+
+      {typeof info.update_behind === 'number' && info.update_behind > 0 && !localBranchUpdate && (
         <Text bold color={t.color.warn}>
           {info.update_behind === 1 ? T.commitsBehindOne(info.update_behind) : T.commitsBehindOther(info.update_behind)}
           <Text bold={false} color={t.color.warn} dimColor>

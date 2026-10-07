@@ -539,6 +539,8 @@ export interface SessionLiveInfo {
   release_date?: string
   update_behind?: unknown | null
   update_command?: string
+  update_local_only?: boolean
+  update_ahead?: number | null
   usage?: Usage | null
   profile_name?: string | null
   mcp_servers?: McpServerStatus[]
@@ -3363,6 +3365,8 @@ export interface SessionCwdSetResult {
   release_date?: string
   update_behind?: unknown | null
   update_command?: string
+  update_local_only?: boolean
+  update_ahead?: number | null
   usage?: Usage | null
   profile_name?: string | null
   mcp_servers?: McpServerStatus[]
