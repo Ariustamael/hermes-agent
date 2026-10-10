@@ -63,6 +63,56 @@ def test_subdirectory_named_auth_json_not_blocked(fake_home):
     assert get_read_block_error(str(nested)) is None
 
 
+def test_symlinked_noncredential_vault_is_not_blocked(fake_home, tmp_path):
+    """A user Markdown vault may be linked from the conventional vault path."""
+    from agent.file_safety import get_read_block_error
+
+    notes = tmp_path / "obsidian"
+    notes.mkdir()
+    note = notes / "README.md"
+    note.write_text("research notes", encoding="utf-8")
+    (fake_home / "vault").symlink_to(notes, target_is_directory=True)
+
+    assert get_read_block_error(str(note)) is None
+
+
+def test_symlinked_credential_vault_remains_blocked(fake_home, tmp_path):
+    """Relocating a real vault through a symlink must not expose its secrets."""
+    from agent.file_safety import get_read_block_error
+
+    secrets = tmp_path / "credentials"
+    secrets.mkdir()
+    for name in ("vault.key", "vault.json.enc"):
+        (secrets / name).write_text("secret", encoding="utf-8")
+    (fake_home / "vault").symlink_to(secrets, target_is_directory=True)
+
+    assert get_read_block_error(str(secrets / "vault.key")) is not None
+
+
+def test_symlinked_noncredential_vault_is_writable(fake_home, tmp_path):
+    """A Markdown vault linked from HERMES_HOME must not be write-blocked."""
+    from agent.file_safety import get_write_denied_error
+
+    notes = tmp_path / "obsidian"
+    notes.mkdir()
+    (fake_home / "vault").symlink_to(notes, target_is_directory=True)
+
+    assert get_write_denied_error(str(notes / "research-note.md")) is None
+
+
+def test_symlinked_credential_vault_remains_write_blocked(fake_home, tmp_path):
+    """A credential-vault symlink must retain the hard write block."""
+    from agent.file_safety import get_write_denied_error
+
+    secrets = tmp_path / "credentials"
+    secrets.mkdir()
+    for name in ("vault.key", "vault.json.enc"):
+        (secrets / name).write_text("secret", encoding="utf-8")
+    (fake_home / "vault").symlink_to(secrets, target_is_directory=True)
+
+    assert get_write_denied_error(str(secrets / "replacement.md")) is not None
+
+
 
 
 

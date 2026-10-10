@@ -293,6 +293,13 @@ def _classify_resolved_write_denial(homes: set[str], resolved: str) -> Optional[
 
     for base in _hermes_dirs():
         for sub in _HERMES_PROTECTED_SUBPATHS:
+            # ``~/.hermes/vault`` can intentionally be a symlink to a user
+            # Markdown vault.  Protect a native vault directory, and a
+            # symlink that resolves to the credential vault's key+ciphertext,
+            # but do not make an unrelated Obsidian target unwritable merely
+            # because of the conventional link name.
+            if sub == "vault" and not _is_credential_vault_dir(base / sub):
+                continue
             with suppress(Exception):
                 if _is_under(resolved, os.path.realpath(os.path.join(str(base), sub))):
                     return "credential"
@@ -365,6 +372,28 @@ _READ_DENIED_DIRS = (
 )
 
 
+_VAULT_SECRET_FILE_NAMES = frozenset({"vault.key", "vault.json.enc"})
+
+
+def _is_credential_vault_dir(vault_dir: Path) -> bool:
+    """Whether the conventional ``vault/`` path is a credential vault.
+
+    A user may deliberately use ``~/.hermes/vault`` as a symlink to an
+    unrelated Markdown vault. Keep native Hermes vault directories fail-closed,
+    but permit such a symlink unless its destination contains both local vault
+    secret files. This preserves protection for a relocated credential vault
+    while avoiding a namespace collision with an Obsidian vault.
+    """
+    try:
+        if not vault_dir.is_symlink():
+            return True
+        resolved = vault_dir.resolve()
+        return all((resolved / name).is_file() for name in _VAULT_SECRET_FILE_NAMES)
+    except OSError:
+        # A broken or inaccessible vault symlink should remain fail-closed.
+        return True
+
+
 def get_read_block_error(path: str) -> Optional[str]:
     """Return an error message when a read targets a denied Hermes path.
 
@@ -400,7 +429,10 @@ def get_read_block_error(path: str) -> Optional[str]:
         )
     else:
         for subdir, dir_msg, file_msg in _READ_DENIED_DIRS:
-            for blocked_dir in _resolve_each(hd / subdir for hd in hermes_dirs):
+            raw_blocked_dirs = (hd / subdir for hd in hermes_dirs)
+            if subdir == "vault":
+                raw_blocked_dirs = (d for d in raw_blocked_dirs if _is_credential_vault_dir(d))
+            for blocked_dir in _resolve_each(raw_blocked_dirs):
                 if _is_under(resolved, blocked_dir):
                     reason = (dir_msg if resolved == blocked_dir else file_msg) + _DID_SUFFIX
                     break
