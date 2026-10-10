@@ -13028,10 +13028,12 @@ def test_session_info_uses_the_full_cli_banner_version_label(monkeypatch):
     assert info["version"] == label
 
 
-def test_session_info_reports_local_branch_drift_without_update_command(monkeypatch):
+@pytest.mark.parametrize("prefetched_behind", [None, 0])
+def test_session_info_reports_local_branch_drift_without_update_command(monkeypatch, prefetched_behind):
+    """A stale no-update cache must not hide known local customization drift."""
     from hermes_cli import banner, config
 
-    monkeypatch.setattr(banner, "get_update_result", lambda timeout: None)
+    monkeypatch.setattr(banner, "get_update_result", lambda timeout: prefetched_behind)
     monkeypatch.setattr(
         banner,
         "get_git_banner_state",

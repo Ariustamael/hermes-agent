@@ -2437,22 +2437,23 @@ def _session_info(agent, session: dict | None = None) -> dict:
     with contextlib.suppress(Exception):
         from hermes_cli.banner import get_git_banner_state, get_update_result
         from hermes_cli.config import recommended_update_command
-        # Two assignments (not one info.update): if recommended_update_command() raises,
-        # update_behind must still be reported, as on main.
+        # The passive source check may return a valid but stale cached zero.  Always
+        # retain the locally fetched divergence, which is exact for a carried branch.
+        # Do not offer the ordinary self-update action for a branch with local commits.
         behind = get_update_result(timeout=0.5)
-        if behind is None:
-            state = get_git_banner_state()
-            local_behind = state.get("behind") if isinstance(state, dict) else None
-            if isinstance(local_behind, int) and local_behind > 0:
-                info["update_behind"] = local_behind
-                info["update_local_only"] = True
-                local_ahead = state.get("ahead") if isinstance(state, dict) else None
-                info["update_ahead"] = local_ahead if isinstance(local_ahead, int) else None
-            else:
-                info["update_behind"] = None
-        else:
-            info["update_behind"] = behind
-            info["update_command"] = recommended_update_command()
+        state = get_git_banner_state()
+        local_behind = state.get("behind") if isinstance(state, dict) else None
+        local_ahead = state.get("ahead") if isinstance(state, dict) else None
+        has_local_behind = isinstance(local_behind, int) and local_behind > 0
+        has_local_commits = isinstance(local_ahead, int) and local_ahead > 0
+        if has_local_behind or behind is not None:
+            info["update_behind"] = local_behind if has_local_behind else behind
+            info["update_local_only"] = has_local_commits
+            info["update_ahead"] = local_ahead if isinstance(local_ahead, int) else None
+            # Two assignments (not one info.update): if recommended_update_command()
+            # raises, update_behind must still be reported, as on main.
+            if not has_local_commits:
+                info["update_command"] = recommended_update_command()
     if live_agent and (warn := _probe_credentials(agent)):
         info["credential_warning"] = warn
     return info
