@@ -175,10 +175,26 @@ def _baked_banner_state() -> Optional[dict]:
     return {"upstream": baked, "local": baked, "ahead": 0, "behind": 0} if baked else None
 
 
+def _refresh_origin_main(repo_dir: Path) -> bool:
+    """Refresh only ``origin/main`` before a new-session divergence display.
+
+    The banner's carried-commit warning is a safety signal, so it must not
+    silently report the age of the last manual fetch.  A failed or timed-out
+    fetch deliberately leaves the existing ref untouched; the subsequent
+    local probe still gives the best available offline state.
+    """
+    return source_check._git_ok(
+        ["fetch", "--no-tags", "origin", "main:refs/remotes/origin/main"],
+        cwd=repo_dir,
+        timeout=15,
+    )
+
+
 def _compute_git_banner_state(repo_dir: Optional[Path] = None) -> Optional[dict]:
     repo_dir = repo_dir or _resolve_repo_dir()
     if repo_dir is None:
         return _baked_banner_state()
+    _refresh_origin_main(repo_dir)
     upstream, local = (source_check._git_stdout(["rev-parse", "--short=8", rev], cwd=repo_dir) for rev in ("origin/main", "HEAD"))
     if not upstream or not local:
         # Live-git lookup failed (e.g. shallow clone without origin/main).
