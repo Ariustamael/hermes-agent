@@ -444,7 +444,7 @@ class TestWslInteropPaths:
         result = gateway_cli._build_wsl_interop_paths(["/mnt/d/heavy-app/bin"])
 
         # which()-resolved dirs land even when absent from the caller's PATH entry list.
-        assert "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0" in result
+        assert "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/" in result
         assert "/mnt/c/WINDOWS/system32" in result
         # Hardcoded System32 family, gated on existence like on a real install.
         assert "/mnt/c/WINDOWS" in result
@@ -452,6 +452,19 @@ class TestWslInteropPaths:
         # Heavy shell-PATH /mnt/ entries never enter, and dedupe keeps out the
         # entry the caller already has.
         assert "/mnt/d/heavy-app/bin" not in result
+
+    def test_known_paths_have_stable_order_with_or_without_which(self, monkeypatch):
+        monkeypatch.setattr(gateway_cli, "is_wsl", lambda: True)
+        monkeypatch.setattr(Path, "exists", lambda self: True)
+        monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: None)
+        without_tools = gateway_cli._build_wsl_interop_paths([])
+        monkeypatch.setattr(
+            gateway_cli.shutil,
+            "which",
+            lambda name: "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe"
+            if name == "powershell.exe" else None,
+        )
+        assert gateway_cli._build_wsl_interop_paths([]) == without_tools
 
     def test_outside_wsl_nothing_is_added(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_wsl", lambda: False)

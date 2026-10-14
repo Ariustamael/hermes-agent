@@ -3030,17 +3030,10 @@ def _build_wsl_interop_paths(path_entries: list[str]) -> list[str]:
     if not is_wsl():
         return []
 
-    candidates: list[str] = []
-    for executable in ("powershell.exe", "cmd.exe", "explorer.exe", "wsl.exe"):
-        resolved = shutil.which(executable)
-        if resolved:
-            resolved_dir = str(Path(resolved).parent)
-            # A unit only needs Windows executables from the mounted Windows filesystem.
-            # Never inherit an arbitrary caller PATH directory merely because a test or shell
-            # resolves a Windows executable name there.
-            if resolved_dir.startswith("/mnt/"):
-                candidates.append(resolved_dir)
-    candidates += [
+    # Keep the known System32 family first, regardless of which() resolution order.
+    # A service's persisted PATH may resolve powershell.exe while an interactive shell
+    # does not; both callers must generate the same unit to avoid restart churn.
+    candidates: list[str] = [
         entry
         for entry in (
             "/mnt/c/WINDOWS/system32",
@@ -3051,6 +3044,13 @@ def _build_wsl_interop_paths(path_entries: list[str]) -> list[str]:
         )
         if Path(entry).exists()
     ]
+    for executable in ("powershell.exe", "cmd.exe", "explorer.exe", "wsl.exe"):
+        resolved = shutil.which(executable)
+        if resolved:
+            resolved_dir = str(Path(resolved).parent)
+            # Never inherit arbitrary caller PATH entries; only resolved Windows tools.
+            if resolved_dir.startswith("/mnt/"):
+                candidates.append(resolved_dir)
 
     def _path_key(entry: str) -> str:
         # WSL can surface the same Windows directory with or without a
