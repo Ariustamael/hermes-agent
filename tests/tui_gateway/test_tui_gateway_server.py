@@ -12308,6 +12308,9 @@ def test_snapshot_restore_is_blocked_from_tui_worker():
 
 def test_command_dispatch_exec_nonzero_surfaces_error(monkeypatch):
     monkeypatch.setattr(
+        "tools.environments.local.build_subprocess_env", dict
+    )
+    monkeypatch.setattr(
         server,
         "_load_cfg",
         lambda: {"quick_commands": {"boom": {"type": "exec", "command": "boom"}}},

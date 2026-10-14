@@ -63,6 +63,7 @@ def _unbound_voice_adapter() -> AsyncMock:
     adapter._client = MagicMock()
     adapter.handle_message = AsyncMock()
     adapter._thread_id_and_chat_for_channel = MagicMock(return_value=(None, "123"))
+    adapter._guild_channel_labels = MagicMock(return_value=None)
     adapter.build_source = MagicMock(side_effect=lambda **kw: SessionSource(platform=Platform.DISCORD, **kw))
     return adapter
 
@@ -640,13 +641,9 @@ class TestVoiceChannelCommands:
         """Discord voice input without the wake word is ignored for privacy."""
         from gateway.config import Platform
 
-        mock_adapter = AsyncMock()
-        mock_adapter._voice_text_channels = {111: 123}
-        mock_adapter._voice_sources = {}
+        mock_adapter = _unbound_voice_adapter()
         mock_channel = AsyncMock()
-        mock_adapter._client = MagicMock()
         mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
-        mock_adapter.handle_message = AsyncMock()
         runner.adapters[Platform.DISCORD] = mock_adapter
 
         await runner._handle_voice_channel_input(111, 42, "background conversation")
@@ -658,13 +655,9 @@ class TestVoiceChannelCommands:
     async def test_input_posts_transcript_in_text_channel(self, runner):
         """Voice input sends transcript message to text channel."""
         from gateway.config import Platform
-        mock_adapter = AsyncMock()
-        mock_adapter._voice_text_channels = {111: 123}
-        mock_adapter._voice_sources = {}
+        mock_adapter = _unbound_voice_adapter()
         mock_channel = AsyncMock()
-        mock_adapter._client = MagicMock()
         mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
-        mock_adapter.handle_message = AsyncMock()
         runner.adapters[Platform.DISCORD] = mock_adapter
         await runner._handle_voice_channel_input(111, 42, "Hermes, test transcript")
         mock_channel.send.assert_called_once()
@@ -677,13 +670,9 @@ class TestVoiceChannelCommands:
         """Near-immediate duplicate STT output should not dispatch twice."""
         from gateway.config import Platform
 
-        mock_adapter = AsyncMock()
-        mock_adapter._voice_text_channels = {111: 123}
-        mock_adapter._voice_sources = {}
+        mock_adapter = _unbound_voice_adapter()
         mock_channel = AsyncMock()
-        mock_adapter._client = MagicMock()
         mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
-        mock_adapter.handle_message = AsyncMock()
         runner.adapters[Platform.DISCORD] = mock_adapter
 
         await runner._handle_voice_channel_input(111, 42, "Hermes, hello from VC")
@@ -697,13 +686,9 @@ class TestVoiceChannelCommands:
         """Small STT wording drift should still be treated as the same utterance."""
         from gateway.config import Platform
 
-        mock_adapter = AsyncMock()
-        mock_adapter._voice_text_channels = {111: 123}
-        mock_adapter._voice_sources = {}
+        mock_adapter = _unbound_voice_adapter()
         mock_channel = AsyncMock()
-        mock_adapter._client = MagicMock()
         mock_adapter._client.get_channel = MagicMock(return_value=mock_channel)
-        mock_adapter.handle_message = AsyncMock()
         runner.adapters[Platform.DISCORD] = mock_adapter
 
         await runner._handle_voice_channel_input(111, 42, "Hermes, this is a test of the voice system")
