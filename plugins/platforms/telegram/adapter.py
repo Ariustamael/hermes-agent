@@ -4951,8 +4951,21 @@ class TelegramAdapter(TelegramHeldInboundMixin, BasePlatformAdapter):
                     continue
                 question = str(quiz.get("question", "")).strip()
                 options = quiz.get("options", {}) or {}
-                if not question or question not in content:
+                if not question:
                     continue
+                if question not in content:
+                    # The cron agent may repair OCR artifacts (e.g. "infi ltrated" ->
+                    # "infiltrated") while preserving the question and choices. Anchor
+                    # on a substantial opening span plus several option texts rather
+                    # than requiring every byte of the stored OCR question to match.
+                    opening = " ".join(question.split())[:120]
+                    normalized_content = " ".join(content.split())
+                    matching_options = sum(
+                        bool(value) and str(value).strip() in content
+                        for value in options.values()
+                    )
+                    if len(opening) < 80 or opening not in normalized_content or matching_options < 3:
+                        continue
                 letters = [letter for letter in ["A", "B", "C", "D", "E"] if letter in options]
                 if not letters:
                     letters = ["A", "B", "C", "D", "E"]

@@ -288,6 +288,45 @@ class TestTelegramQuizButtons:
             "quiz:grays_back_q005:E",
         ]
 
+    def test_cron_quiz_ocr_repair_still_attaches_buttons(self, tmp_path):
+        adapter = _make_adapter()
+        quiz = self._write_quiz(tmp_path)
+        quiz["question"] = (
+            "A 51-year-old male is admitted to the hospital with severe dyspnea. "
+            "Radiographic examination reveals a tension pneumothorax. Adequate local "
+            "anesthesia of the chest wall prior to insertion of a chest tube is necessary "
+            "for pain control. Of the following layers, which is the deepest that must be "
+            "infi ltrated with the local anesthetic to achieve adequate anesthesia?"
+        )
+        quiz["options"] = {
+            "A": "Endothoracic fascia", "B": "Intercostal muscles", "C": "Parietal pleura",
+            "D": "Subcutaneous fat", "E": "Visceral pleura",
+        }
+        quiz_path = tmp_path / "state" / "telegram_quizzes" / f"{quiz['qid']}.json"
+        quiz_path.write_text(json.dumps(quiz), encoding="utf-8")
+        content = (
+            "Cronjob Response: Ortho Teacher daily morning Gray quiz\n\n"
+            + quiz["question"].replace("infi ltrated", "infil\u00adtrated")
+            + "\n\n**A.** Endothoracic fascia  \n**B.** Intercostal muscles  \n"
+            "**C.** Parietal pleura  \n**D.** Subcutaneous fat  \n"
+            "**E.** Visceral pleura\n\n"
+            "Tap an answer below, or reply A-E. The answer remains hidden until marked."
+        )
+        with patch("hermes_constants.get_hermes_home", return_value=tmp_path), patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardButton",
+            side_effect=lambda text, callback_data: SimpleNamespace(text=text, callback_data=callback_data),
+        ), patch(
+            "plugins.platforms.telegram.adapter.InlineKeyboardMarkup",
+            side_effect=lambda rows: SimpleNamespace(inline_keyboard=rows),
+        ):
+            markup = adapter._quiz_reply_markup_for_content(content)
+            assert markup is not None
+            assert markup.inline_keyboard[0][2].callback_data == f"quiz:{quiz['qid']}:C"
+            assert adapter._quiz_reply_markup_for_content(
+                content.replace("Parietal pleura", "other option").replace(
+                    "Visceral pleura", "other option").replace("Intercostal muscles", "other option")
+            ) is None
+
     @pytest.mark.asyncio
     async def test_send_attaches_quiz_reply_markup_to_first_chunk(self, tmp_path):
         adapter = _make_adapter()
